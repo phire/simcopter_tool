@@ -116,15 +116,13 @@ class ModuleInfo(ConstructClass):
 
 class DebugInfomation(ConstructClass):
     subcon = Struct(
-        Probe(lookahead=20),
         "Header" / DebugInfomationHeader,
-        #"ModuleInfo" / FixedSized(this.Header.ModuleInfoSize, GreedyRange(ModuleInfo)),
         "ModuleInfo" / FixedSized(this.Header.ModuleInfoSize,
-            RepeatUntil(lambda x, lst, ctx: x._io.tell() == ctx.Header.ModuleInfoSize,
-            ModuleInfo
+           RepeatUntil(lambda x, lst, ctx: x._io.tell() == DebugInfomationHeader.sizeof() + ctx.Header.ModuleInfoSize,
+           ModuleInfo
         )),
         "SectionContribution" / FixedSized(this.Header.SectionContributionSize,
-            RepeatUntil(lambda x, lst, ctx: x._io.tell() == ctx.Header.SectionContributionSize,
+            RepeatUntil(lambda x, lst, ctx: x._io.tell() == DebugInfomationHeader.sizeof() + ctx.Header.ModuleInfoSize + ctx.Header.SectionContributionSize,
             SectionContrib)
         ),
         "SectionMap" / FixedSized(this.Header.SectionMapSize, SectionMap),
@@ -155,28 +153,16 @@ if __name__ == "__main__":
 
     # exit(0)
 
-    msf.getStream(0x3)
+    #msf.getStream(0x3)
 
     dbi_stream = msf.getStream(0x3)
+    dbi = DebugInfomation.parse_stream(dbi_stream)
 
-    dbi = DebugInfomation.parse_stream(msf.getStream(0x3))
-    print(dbi)
-    #print(dbi.SC)
+    if len(sys.argv) == 2:
+        for i, (modi, source) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules)):
+            print(f"Module {i} {modi.ModuleName} {modi.Stream} {source}")
 
-    # for i, modi in enumerate(dbi.ModuleInfo):
-    #     if modi.SectionContrib.ModuleIndex == 0x20:
-    #         print(f"Module {i:x}")
-    #         print(modi)
-
-    # for sc in dbi.SectionContribution:
-    #     if sc.ModuleIndex == 0x20:
-    #         print(sc)
-
-    #print(dbi.SourceInfo.Modules[0x20])
-
-    # for i, (modi, source) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules)):
-    #     print(f"Module {i} {modi.ModuleName} {modi.Stream} {source}")
-    # exit()
+        exit()
 
     modi = dbi.ModuleInfo[int(sys.argv[2])]
 
@@ -184,23 +170,21 @@ if __name__ == "__main__":
 
     print(dbi.SourceInfo.Modules[int(sys.argv[2])])
 
-    mod_stream = msf.getStream(modi.Stream)
-    moduleStream = Struct(
-        "Symbols" / If(modi.SymbolsSize, (FixedSized(modi.SymbolsSize,
-            Struct(
-                "Signature" / Int32ul,
-                "Records" / RepeatUntil(lambda x, lst, ctx: x._io.tell() == modi.SymbolsSize, CodeviewRecord)
-            )
-        ))),
-        "Lines" / If(modi.LinesSize, (FixedSized(modi.LinesSize,
-            LinesSection
-        ))),
-    )
-    symbols = moduleStream.parse_stream(mod_stream)
-    print(symbols)
-
-
-
-
-
+    if modi.Stream == 0xffff:
+        print("No debug symbols")
+    else:
+        mod_stream = msf.getStream(modi.Stream)
+        moduleStream = Struct(
+            "Symbols" / If(modi.SymbolsSize, (RestreamData(FixedSized(modi.SymbolsSize, GreedyBytes),
+                Struct(
+                    "Signature" / Int32ul,
+                    "Records" / RepeatUntil(lambda x, lst, ctx: x._io.tell() == modi.SymbolsSize, CodeviewRecord)
+                )
+            ))),
+            "Lines" / If(modi.LinesSize, (RestreamData(FixedSized(modi.LinesSize, GreedyBytes),
+                LinesSection
+            ))),
+        )
+        symbols = moduleStream.parse_stream(mod_stream)
+        print(symbols)
 

@@ -24,7 +24,6 @@ class File(ConstructClass):
             "Start" / Hex(Int32ul),
             "End" / Hex(Int32ul),
         )),
-        Probe(lookahead=10),
         "SourceFile" / PascalString(Int8ul, "ascii"),
 
     )

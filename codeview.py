@@ -129,4 +129,9 @@ class CodeviewRecord(ConstructClass):
         )),
     )
 
+    def parsed(self, ctx):
+        pass
+        #print(f"Record: {self.RecordLength} {self.RecordType}\n\t{self.Data}")
+
+
 

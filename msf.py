@@ -183,8 +183,6 @@ class StreamDirectory(ConstructClass):
             #print(f"idx: {len(self.Streams):x}, stream size {size}, count {count}, blocks {stream_blocks}")
             self.Streams.append(MsfStream(fd, size, self.blocksize, stream_blocks))
 
-        print(f"blocks left: {blocks}")
-
         assert len(blocks) == 0
 
     def getStream(self, idx):
