@@ -134,11 +134,17 @@ RefSym2 = Struct(
 
 @CVRec(0x0400) # S_PROCREF_ST
 class ProcRef(ConstructClass):
-    # TODO: The public symbol table contains a corrupted version of this record
-    #       It has the type and length of REFSYM, but actually contains a RefSym2, complete
-    #       with a name that massivly overruns the reported length.
-    #       How do we detect these?
-    subcon = RefSym2
+    # This doesn't match microsoft's documentation, where RefSym doesn't have a name.
+    # Instead, vc++ 4.1 seems to output a corrupted record where the length matches RefSym2,
+    # but the name actually exists. This means the length of this record is far too short.
+
+    subcon = Struct(
+        "SucOfName" / Int32ul, # I have no idea what "SUC" is
+        "SymbolId" / Int32ul,  # offset into $$Symbols table
+        "ModuleId" / Int16ul,  # Module containing actual symbol
+        "Fill"    /  Int16ul,  # is this just padding?
+        "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name of frist class memeber
+    )
 
 @CVRec(0x040a) # LF_VFUNCTAB_16t
 class VirtualFunctionTable(ConstructClass):
@@ -150,8 +156,16 @@ class CodeviewRecord(ConstructClass):
     subcon = Struct(
         "RecordLength" / Int16ul,
         "RecordType" / Int16ul,
+        "_length_fixed" / IfThenElse(this.RecordType == 0x400,
+            # This is a hack to fix the length of the ProcRef record
+            FocusedSeq("Length",
+                "Ref" / Peek(ProcRef),
+                "Length" / Computed(lambda ctx: len(ctx.Ref.Name) + 13)
+            ),
+            Computed(this.RecordLength - 2),
+        ),
         StopIf(lambda ctx: ctx.RecordLength < 2),
-        "Data" / FixedSized(this.RecordLength - 2, Switch(this.RecordType, CVSwitch,
+        "Data" / FixedSized(this._length_fixed, Switch(this.RecordType, CVSwitch,
             default=HexDump(GreedyBytes)
             #default=Error
         )),
@@ -159,4 +173,4 @@ class CodeviewRecord(ConstructClass):
 
     def parsed(self, ctx):
         pass
-        #print(f"Record: {self.RecordLength} {self.RecordType}\n\t{self.Data}")
+        #print(f"Record: {self.RecordLength}/{self._length_fixed} {self.RecordType:04x}\n\t{self.Data}")
