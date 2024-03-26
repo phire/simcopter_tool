@@ -12,7 +12,7 @@ from msf import *
 from codeview import *
 from lines import *
 from tpi import *
-from gsi import Gsi, Pgsi
+from gsi import Gsi, Pgsi, LoadSymbols
 
 
 StreamNumT = Int16ul
@@ -181,10 +181,7 @@ if __name__ == "__main__":
 
     symbolRecordStream = msf.getStream(dbi.Header.SymbolRecordStream)
 
-    symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,
-            Aligned(4, CodeviewRecord)
-        ).parse_stream(symbolRecordStream)
-    #print(symbols)
+    symbols = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
 
     gsi_stream = msf.getStream(dbi.Header.GlobalSymbolStream)
     pgsi_stream = msf.getStream(dbi.Header.PublicSymbolStream)
@@ -198,6 +195,30 @@ if __name__ == "__main__":
     all_symbols = set([x.offset for x in gsi.all_hashes + pgsi.gsi.all_hashes])
     print(f"Total symbols: {len(all_symbols)} of {len(gsi.all_hashes + pgsi.gsi.all_hashes)}")
 
+    print(f"Symbol records: {len(symbols.symbols)}")
+
+    for sym in gsi.all_hashes:
+        rec = symbols.fromOffset(sym.offset - 1)
+        if rec:
+            rec.isGlobal = True
+        else:
+            print(f"Global symbol {sym.offset-1:x} not found")
+
+
+    for sym in pgsi.gsi.all_hashes:
+        rec = symbols.fromOffset(sym.offset - 1)
+        if rec:
+            rec.isPublic = True
+        else:
+            print(f"Public symbol {sym.offset-1:x} not found")
+
+    neither = 0
+
+    print(f"Of {len(symbols.symbols)} records, {neither} are neither global nor public")
+
+    for sym in symbols.symbols:
+        access = "public" if sym.isPublic else "global"
+        print(f"{access} {sym}")
     exit(0)
 
     if len(sys.argv) == 2:

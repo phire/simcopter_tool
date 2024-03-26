@@ -15,6 +15,8 @@
 from construct import *
 from constructutils import *
 
+from codeview import CodeviewRecord
+
 class HRFile(ConstructClass):
     # This is the on-disk format for the GSI/PGSI hash tables
     subcon = Struct(
@@ -89,3 +91,29 @@ class Pgsi(ConstructClass):
         "gsi" / FixedSized(this.header.HashesBytes, Gsi),
         "addrmap" / Array(this.header.AddrMapBytes // 4, Int32ul),
     )
+
+class Symbols:
+    def __init__(self, symbols):
+        self.symbols = []
+        self.byRecOffset = {}
+
+        for rec in symbols:
+            self.symbols.append(rec)
+            self.byRecOffset[rec._addr] = rec
+            rec.isGlobal = False
+            rec.isPublic = False
+
+    def fromOffset(self, offset):
+        try:
+            return self.byRecOffset[offset]
+        except KeyError:
+            return None
+
+
+def LoadSymbols(symbolRecordStream):
+
+    symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,
+            Aligned(4, CodeviewRecord)
+        ).parse_stream(symbolRecordStream)
+
+    return Symbols(symbols)

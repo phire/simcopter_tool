@@ -376,12 +376,36 @@ class TypeInfomation(ConstructClass):
         "MinimumTI" / Int16ul, # lowest TI
         "MaximumTI" / Int16ul, # highest TI + 1
         "ByteCount" / Int32ul, # Num bytes in following stream
+
+        # TODO: Should we parse this hash value stream?
+        #       Appears to be 16bits per record, and is probally the same hash used for the GSI mapping
+        #       Probally used to accelerate reverse lookups?
+        #       I'm not sure we will find any interesting information there.
         "HashValueStream" / Int16ul,
         Padding(2),
         "Records" / Array(this.MaximumTI - this.MinimumTI, TypeRecord)
-        # "Records" / RestreamData(FixedSized(this.ByteCount, GreedyBytes),
-        #     GreedyRange(TypeRecord)
-        #      #RepeatUntil(lambda x, lst, ctx: x._io.tell() == this.ByteCount, TypeRecord)
-        # )
     )
+
+    def parsed(self, ctx):
+        print(f"Loaded {len(self.Records)} type records")
+
+        # TODO: Fill in all the built-in types
+        self.types = [None] * self.MinimumTI
+        self.byRecOffset = {}
+
+        for rec in self.Records:
+            print(f"{rec._addr:04x} {rec}")
+            rec.isGlobal = False
+            rec.isPublic = False
+            self.types += [rec]
+            self.byRecOffset[rec._addr] = rec
+
+        for k, v in self.byRecOffset.items():
+            print(f"{k:x} {v}")
+
+    def fromOffset(self, offset):
+        try:
+            return self.byRecOffset[offset]
+        except KeyError:
+            return None
 
