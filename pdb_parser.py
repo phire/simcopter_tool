@@ -12,6 +12,7 @@ from msf import *
 from codeview import *
 from lines import *
 from tpi import *
+from gsi import Gsi, Pgsi
 
 
 StreamNumT = Int16ul
@@ -29,6 +30,8 @@ class DebugInfomationHeader(ConstructClass):
     )
 
 class SectionContrib(ConstructClass):
+    # Appears to be struct SC40:
+    # https://github.com/microsoft/microsoft-pdb/blob/master/PDB/include/dbicommon.h#L19
     subcon = Struct(
         "Section" / Int16ul,
         "Unknown1" / Int16ul, # Always 0xcbf for valid entries
@@ -178,11 +181,22 @@ if __name__ == "__main__":
 
     symbolRecordStream = msf.getStream(dbi.Header.SymbolRecordStream)
 
-
     symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,
             Aligned(4, CodeviewRecord)
         ).parse_stream(symbolRecordStream)
-    print(symbols)
+    #print(symbols)
+
+    gsi_stream = msf.getStream(dbi.Header.GlobalSymbolStream)
+    pgsi_stream = msf.getStream(dbi.Header.PublicSymbolStream)
+
+    gsi = Gsi.parse_stream(gsi_stream)
+    print(f"Global symbols: {len(gsi.all_hashes)}")
+
+    pgsi = Pgsi.parse_stream(pgsi_stream)
+    print(f"Public symbols: {len(pgsi.gsi.all_hashes)}")
+
+    all_symbols = set([x.offset for x in gsi.all_hashes + pgsi.gsi.all_hashes])
+    print(f"Total symbols: {len(all_symbols)} of {len(gsi.all_hashes + pgsi.gsi.all_hashes)}")
 
     exit(0)
 

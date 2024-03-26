@@ -57,7 +57,10 @@ class MsfStream():
         if block_offset > 0:
             self.data = self.data[block_offset:]
 
-    def read(self, size):
+    def read(self, size=-1):
+        if size == -1:
+            size = self.size - self.pos
+
         remaining = size
         data = b""
 
@@ -88,8 +91,10 @@ class MsfStream():
         oldpos = self.pos
         if wherenc == 0:
             self.pos = n
-        elif wherenc == 2:
+        elif wherenc == 1:
             self.pos += n
+        elif wherenc == 2:
+            self.pos = self.size + n
         if oldpos != self.pos:
             self.do_seek()
 
