@@ -167,12 +167,19 @@ if __name__ == "__main__":
     tpi_stream = msf.getStream(2)
     dbi_stream = msf.getStream(3)
 
-    tpi = TypeInfomation.parse_stream(tpi_stream)
-    print(tpi)
+    #tpi = TypeInfomation.parse_stream(tpi_stream)
+    #print(tpi)
 
-    exit(0)
+    #exit(0)
 
     dbi = DebugInfomation.parse_stream(dbi_stream)
+
+    print(dbi.Header)
+
+    pub = GreedyRange(Aligned(4, CodeviewRecord)).parse_stream(msf.getStream(dbi.Header.SymbolRecordStream))
+    print(pub)
+
+    exit(0)
 
     if len(sys.argv) == 2:
         for i, (modi, source) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules)):

@@ -57,46 +57,46 @@ class BpRelative(ConstructClass):
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
-@CVRec(0x201) # S_LDATA32_16t
-class LocalData(ConstructClass):
-    subcon = Struct(
+DataSym = Struct(
         "Offset" / Int32ul,
         "Segment" / Int16ul,
         "Type" / Int16ul,
+        "Name" / PascalString(Int8ul, "ascii"),
+    )
+
+@CVRec(0x201) # S_LDATA32_16t
+class LocalData(ConstructClass):
+    subcon = DataSym
+
+@CVRec(0x202) # S_GDATA32_16t
+class GlobalData(ConstructClass):
+    subcon = DataSym
+
+@CVRec(0x203) # S_PUB32_16t
+class PublicData(ConstructClass):
+    subcon = DataSym
+
+ProcSym = Struct(
+        "pParent" / Int32ul,
+        "pEnd" / Int32ul,
+        "pNext" / Int32ul,
+        "Len" / Int32ul,
+        "DbgStart" / Int32ul,
+        "DbgEnd" / Int32ul,
+        "Offset" / Int32ul,
+        "Segment" / Int16ul,
+        "Type" / Int16ul,
+        "Flags" / Int8ul,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
 @CVRec(0x204) # S_LPROC32_16t
-class GlobalProcedureStart(ConstructClass):
-    subcon = Struct(
-        "pParent" / Int32ul,
-        "pEnd" / Int32ul,
-        "pNext" / Int32ul,
-        "Len" / Int32ul,
-        "DbgStart" / Int32ul,
-        "DbgEnd" / Int32ul,
-        "Offset" / Int32ul,
-        "Segment" / Int16ul,
-        "Type" / Int16ul,
-        "Flags" / Int8ul,
-        "Name" / PascalString(Int8ul, "ascii"),
-    )
+class LocalProcedureStart(ConstructClass):
+    subcon = ProcSym
 
 @CVRec(0x205) # S_GPROC32_16t
 class GlobalProcedureStart(ConstructClass):
-    subcon = Struct(
-        "pParent" / Int32ul,
-        "pEnd" / Int32ul,
-        "pNext" / Int32ul,
-        "Len" / Int32ul,
-        "DbgStart" / Int32ul,
-        "DbgEnd" / Int32ul,
-        "Offset" / Int32ul,
-        "Segment" / Int16ul,
-        "Type" / Int16ul,
-        "Flags" / Int8ul,
-        "Name" / PascalString(Int8ul, "ascii"),
-    )
+    subcon = ProcSym
 
 @CVRec(0x207) # S_BLOCK32
 class BlockStart(ConstructClass):
@@ -118,6 +118,34 @@ class CodeLabel(ConstructClass):
         "Name" / PascalString(Int8ul, "ascii"),
     ))
 
+RefSym = Struct(
+        "SucOfName" / Int32ul, # I have no idea what "SUC" is
+        "SymbolId" / Int32ul,  # offset into $$Symbols table
+        "ModuleId" / Int16ul,  # Module containing actual symbol
+        "Fill"    /  Int16ul,  # is this just padding?
+    )
+
+RefSym2 = Struct(
+        "SucOfName" / Int32ul, # I have no idea what "SUC" is
+        "SymbolId" / Int32ul,  # offset into $$Symbols table
+        "ModuleId" / Int16ul,  # Module containing actual symbol
+        "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name of frist class memeber
+    )
+
+@CVRec(0x0400) # S_PROCREF_ST
+class ProcRef(ConstructClass):
+    # TODO: The public symbol table contains a corrupted version of this record
+    #       It has the type and length of REFSYM, but actually contains a RefSym2, complete
+    #       with a name that massivly overruns the reported length.
+    #       How do we detect these?
+    subcon = RefSym2
+
+@CVRec(0x040a) # LF_VFUNCTAB_16t
+class VirtualFunctionTable(ConstructClass):
+    subcon = Struct(
+        "Type" / Int16ul,
+    )
+
 class CodeviewRecord(ConstructClass):
     subcon = Struct(
         "RecordLength" / Int16ul,
@@ -132,6 +160,3 @@ class CodeviewRecord(ConstructClass):
     def parsed(self, ctx):
         pass
         #print(f"Record: {self.RecordLength} {self.RecordType}\n\t{self.Data}")
-
-
-
