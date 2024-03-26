@@ -176,8 +176,13 @@ if __name__ == "__main__":
 
     print(dbi.Header)
 
-    pub = GreedyRange(Aligned(4, CodeviewRecord)).parse_stream(msf.getStream(dbi.Header.SymbolRecordStream))
-    print(pub)
+    symbolRecordStream = msf.getStream(dbi.Header.SymbolRecordStream)
+
+
+    symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,
+            Aligned(4, CodeviewRecord)
+        ).parse_stream(symbolRecordStream)
+    print(symbols)
 
     exit(0)
 
