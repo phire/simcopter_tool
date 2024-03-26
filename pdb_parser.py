@@ -11,6 +11,7 @@ from msf import *
 
 from codeview import *
 from lines import *
+from tpi import *
 
 
 StreamNumT = Int16ul
@@ -142,20 +143,35 @@ if __name__ == "__main__":
 
     f = open(filename, "rb")
     msf = MsfFile.parse_stream(f)
-    #print(msf)
+    # print(msf)
 
-    # if len(sys.argv) > 2:
-    #     stream_idx = int(sys.argv[2])
-    #     stream = msf.getStream(stream_idx)
-    #     #stream.seek(0)
+    if len(sys.argv) > 2:
+        stream_idx = int(sys.argv[2])
+        stream = msf.getStream(stream_idx)
+        #stream.seek(0)
+        data = stream.read(stream.size)
+        chexdump(data)
+        exit(0)
+
+    # for i in range(len(msf)):
+    #     stream = msf.getStream(i)
     #     data = stream.read(stream.size)
-    #     chexdump(data)
 
-    # exit(0)
+    #     if b"StationDirectoryNameArray" in data:
+    #         print(f"Stream {i}\n\n")
+    #         chexdump(data)
+
 
     #msf.getStream(0x3)
 
-    dbi_stream = msf.getStream(0x3)
+    tpi_stream = msf.getStream(2)
+    dbi_stream = msf.getStream(3)
+
+    tpi = TypeInfomation.parse_stream(tpi_stream)
+    print(tpi)
+
+    exit(0)
+
     dbi = DebugInfomation.parse_stream(dbi_stream)
 
     if len(sys.argv) == 2:

@@ -151,6 +151,9 @@ class MsfFile(ConstructClass):
     def getStream(self, idx):
         return self.directory.getStream(idx)
 
+    def __len__(self):
+        return self.directory.NumStreams
+
 class StreamDirectory(ConstructClass):
     subcon = Struct(
         "NumStreams" / Hex(Int16ul),
