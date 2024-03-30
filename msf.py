@@ -51,7 +51,8 @@ class MsfStream():
         self.fd.seek(block * self.block_size)
         self.data = self.fd.read(self.block_size)
 
-        if block_idx == len(self.blocks) - 1:
+        if block_idx == len(self.blocks) - 1 and self.size % self.block_size != 0:
+            # trim last block
             self.data = self.data[:self.size % self.block_size]
 
         if block_offset > 0:
