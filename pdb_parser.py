@@ -5,14 +5,15 @@ from construct.debug import Debugger
 
 from constructutils import *
 
-
 from utils import *
 from msf import *
 
 from codeview import *
 from lines import *
 from tpi import *
-from gsi import Gsi, Pgsi, LoadSymbols
+from gsi import Gsi, Pgsi, LoadSymbols, Visablity
+
+
 
 
 StreamNumT = Int16ul
@@ -36,7 +37,7 @@ class SectionContrib(ConstructClass):
         "Section" / Int16ul,
         "Unknown1" / Int16ul, # Always 0xcbf for valid entries
         "Offset" / Int32ul,
-        "Size" / Hex(Int32ul),
+        "Size" / Int32ul,
         "Characteristics" / Hex(Int32ul),
         "ModuleIndex" / Int16ul,
         "Pad2" / Int16ul,
@@ -173,8 +174,6 @@ if __name__ == "__main__":
     #tpi = TypeInfomation.parse_stream(tpi_stream)
     #print(tpi)
 
-    #exit(0)
-
     dbi = DebugInfomation.parse_stream(dbi_stream)
 
     print(dbi.Header)
@@ -187,20 +186,13 @@ if __name__ == "__main__":
     pgsi_stream = msf.getStream(dbi.Header.PublicSymbolStream)
 
     gsi = Gsi.parse_stream(gsi_stream)
-    print(f"Global symbols: {len(gsi.all_hashes)}")
-
     pgsi = Pgsi.parse_stream(pgsi_stream)
-    print(f"Public symbols: {len(pgsi.gsi.all_hashes)}")
-
-    all_symbols = set([x.offset for x in gsi.all_hashes + pgsi.gsi.all_hashes])
-    print(f"Total symbols: {len(all_symbols)} of {len(gsi.all_hashes + pgsi.gsi.all_hashes)}")
-
-    print(f"Symbol records: {len(symbols.symbols)}")
 
     for sym in gsi.all_hashes:
         rec = symbols.fromOffset(sym.offset - 1)
         if rec:
-            rec.isGlobal = True
+            rec.visablity = Visablity.Global
+            rec.refcount = sym.refcount
         else:
             print(f"Global symbol {sym.offset-1:x} not found")
 
@@ -208,17 +200,59 @@ if __name__ == "__main__":
     for sym in pgsi.gsi.all_hashes:
         rec = symbols.fromOffset(sym.offset - 1)
         if rec:
-            rec.isPublic = True
+            rec.visablity = Visablity.Public
+            rec.refcount = sym.refcount
         else:
             print(f"Public symbol {sym.offset-1:x} not found")
 
-    neither = 0
+    SymByAddress = {}
 
-    print(f"Of {len(symbols.symbols)} records, {neither} are neither global nor public")
-
+    # Put global/public symbols with known addresses in a map
     for sym in symbols.symbols:
-        access = "public" if sym.isPublic else "global"
-        print(f"{access} {sym}")
+        #print(f"{sym}")
+        if isinstance(sym.Data, (PublicData, GlobalData, LocalData)):
+            SymByAddress[(sym.Data.Segment, sym.Data.Offset)] = sym
+        elif isinstance(sym.Data, ProcRef):
+            module = sym.Data.ModuleId
+            offset = sym.Data.SymbolOffset
+        elif isinstance(sym.Data, LocalProcRef):
+            # I suspect these are functions from a module that have been re-exported into global visibility?
+            pass
+        elif isinstance(sym.Data, Constant):
+            # these appear to be enum values
+            pass
+        elif isinstance(sym.Data, UserDefinedType):
+            # I think these are typedefs?
+            pass
+        else:
+           print(f"{sym}, {sym.Data.__class__}")
+
+
+
+    for sc in dbi.SectionContribution:
+        module = dbi.ModuleInfo[sc.ModuleIndex]
+        sources = dbi.SourceInfo.Modules[sc.ModuleIndex]
+        source = "?"
+        try:
+            source = [s for s in sources if ".h" not in s][0]
+        except IndexError:
+            pass
+
+        name = "?"
+        ty = 0
+        sym = None
+        try:
+            sym = SymByAddress[(sc.Section, sc.Offset)]
+            name = sym.Data.Name
+            ty = sym.Data.Type
+        except KeyError:
+            pass
+
+        # todo: each section contribution might contain multiple symbols
+        # todo: non-global symbols
+
+        print(f"{sc.Section}:{sc.Offset:08x}-{sc.Offset+sc.Size-1:08x} {sc.ModuleIndex} {module.ModuleName} {source} {name} {ty}")
+
     exit(0)
 
     if len(sys.argv) == 2:

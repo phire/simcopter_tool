@@ -17,6 +17,8 @@ from constructutils import *
 
 from codeview import CodeviewRecord
 
+from enum import Enum
+
 class HRFile(ConstructClass):
     # This is the on-disk format for the GSI/PGSI hash tables
     subcon = Struct(
@@ -92,16 +94,22 @@ class Pgsi(ConstructClass):
         "addrmap" / Array(this.header.AddrMapBytes // 4, Int32ul),
     )
 
+class Visablity(Enum):
+    Unknown = 0
+    Global = 1
+    Public = 2
+
 class Symbols:
     def __init__(self, symbols):
         self.symbols = []
         self.byRecOffset = {}
+        self.byAddress = {}
 
         for rec in symbols:
             self.symbols.append(rec)
             self.byRecOffset[rec._addr] = rec
-            rec.isGlobal = False
-            rec.isPublic = False
+            rec.visablity = Visablity.Unknown
+            rec.refcount = 0
 
     def fromOffset(self, offset):
         try:

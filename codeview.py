@@ -151,18 +151,11 @@ class CodeLabel(ConstructClass):
 # but the name actually exists. This means the length of this record is far too short.
 RefSym = Struct(
     "SucOfName" / Int32ul, # I have no idea what "SUC" is, always appears to be zero
-    "SymbolId" / Int32ul,  # offset into $$Symbols table
+    "SymbolOffset" / Int32ul,  # offset into $$Symbols table (I think this is the local symbols of the referenced module)
     "ModuleId" / Int16ul,  # Module containing actual symbol
     "Fill"    /  Int16ul,  # is this just padding?
-    "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name of frist class memeber
+    "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name that has been made a first class member
 )
-
-RefSym2 = Struct(
-        "SucOfName" / Int32ul, # I have no idea what "SUC" is
-        "SymbolId" / Int32ul,  # offset into $$Symbols table
-        "ModuleId" / Int16ul,  # Module containing actual symbol
-        "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name of frist class memeber
-    )
 
 @CVRec(0x0400) # S_PROCREF_ST
 class ProcRef(ConstructClass):
