@@ -72,7 +72,7 @@ class End(ConstructClass):
 @CVRec(0x9) # S_OBJNAME_ST
 class ObjName(ConstructClass):
     subcon = Struct(
-        Const(0, Int32ul),
+        "Sig" / Int32ul, # Usually 0, but sometimes 1 for xmt_obj files
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
@@ -177,7 +177,7 @@ class VirtualFunctionTable(ConstructClass):
     )
 
 class CodeviewRecord(ConstructClass):
-    subcon = Struct(
+    subcon = Aligned(4, Struct(
         "RecordLength" / Int16ul,
         "RecordType" / Int16ul,
         "_length_fixed" / IfThenElse(lambda ctx: ctx.RecordType in (0x400, 0x401, 0x403),
@@ -190,10 +190,10 @@ class CodeviewRecord(ConstructClass):
         ),
         StopIf(lambda ctx: ctx.RecordLength < 2),
         "Data" / FixedSized(this._length_fixed, Switch(this.RecordType, CVSwitch,
-            #default=HexDump(GreedyBytes)
-            default=Error
+            default=HexDump(GreedyBytes)
+            #default=Error
         )),
-    )
+    ))
 
     def parsed(self, ctx):
         pass

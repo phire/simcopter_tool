@@ -38,10 +38,55 @@ class SectionContrib(ConstructClass):
         "Unknown1" / Int16ul, # Always 0xcbf for valid entries
         "Offset" / Int32ul,
         "Size" / Int32ul,
+        # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_section_header
         "Characteristics" / Hex(Int32ul),
         "ModuleIndex" / Int16ul,
         "Pad2" / Int16ul,
     )
+
+    def alignment(self) -> int:
+        align = (self.Characteristics & 0x00f00000) >> 20
+        if align == 0:
+            return 0
+        return 2 ** (align - 1)
+
+    def characteristicsString(self):
+        s = ""
+        align = self.alignment()
+        if align:
+            s += f"{align} byte alignment, "
+        if self.Characteristics & 0x00000020:
+            s += "code, "
+        if self.Characteristics & 0x00000040:
+            s += "initialized_data, "
+        if self.Characteristics & 0x00000080:
+            s += "uninitialized_data, "
+        if self.Characteristics & 0x00001000:
+            # I'm pretty this marks functions that were defined in header files (and therefore
+            # might have been included in multiple .obj files (before linking eliminated duplicates)
+            s += "(comdat), "
+        if self.Characteristics & 0x10000000:
+            s += "shared, "
+        if self.Characteristics & 0x20000000:
+            s += "execute, "
+        if self.Characteristics & 0x40000000:
+            s += "read, "
+        if self.Characteristics & 0x80000000:
+            s += "write, "
+        return s
+
+    def is_code(self):
+        return self.Characteristics & 0x00000020
+
+    def is_data(self):
+        return self.Characteristics & 0x00000040
+
+    def is_bss(self):
+        return self.Characteristics & 0x00000080
+
+    def __str__(self):
+        return f"{self.Section}:{self.Offset:08x}-{self.Offset+self.Size-1:08x} Module: {self.ModuleIndex}, {self.characteristicsString()}"
+
 
 class SectionMapEntry(ConstructClass):
     subcon = Struct(
@@ -100,6 +145,8 @@ class ModuleInfo(ConstructClass):
     # immediately follows header
     subcon = Aligned(4, Struct(
         "Unused" / Int32ul, # Currently open module?
+        # Appears to be a copy of the last Section Contribution for this module.
+        # which makes it kind of useless
         "SectionContrib" / SectionContrib,
         "Flags" / Int16ul,
         "Stream" / StreamNumT,
@@ -110,7 +157,9 @@ class ModuleInfo(ConstructClass):
         Padding(2),
         #"pad" / Int16ul,
         "SourceFilenameIndex" / Int32ul,
-        "ModuleName" / CString("ascii"),
+        "ModuleName" / CString("ascii"), # name of the .obj file
+        # When the .obj file was directly linked into the exe: ObjFilename == ModuleName
+        # Otherwise, ObjFilename is the library it was previously linked into
         "ObjFilename" / CString("ascii"),
     ))
 
