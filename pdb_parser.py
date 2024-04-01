@@ -44,6 +44,9 @@ class SectionContrib(ConstructClass):
         "Pad2" / Int16ul,
     )
 
+    def parsed(self, ctx):
+        self.symbols = []
+
     def alignment(self) -> int:
         align = (self.Characteristics & 0x00f00000) >> 20
         if align == 0:
@@ -187,6 +190,7 @@ class DebugInfomation(ConstructClass):
         # contents of substreams should fill the stream
         dbi = self.Header
         size = dbi.ModuleInfoSize + dbi.SectionContributionSize + dbi.SectionMapSize + dbi.SourceInfoSize
+        assert len(self.SectionContribution * SectionContrib.sizeof()) == dbi.SectionContributionSize
         assert size + DebugInfomationHeader.sizeof() == self._stream.size
 
 
@@ -275,8 +279,6 @@ if __name__ == "__main__":
             pass
         else:
            print(f"{sym}, {sym.Data.__class__}")
-
-
 
     for sc in dbi.SectionContribution:
         module = dbi.ModuleInfo[sc.ModuleIndex]

@@ -66,7 +66,12 @@ class Gsi(ConstructClass):
         del self.hashes
         del self.buckets
 
-
+    def apply_visablity(self, visablity, symbols):
+        for sym in self.all_hashes:
+            rec = symbols.fromOffset(sym.offset - 1)
+            if rec:
+                rec.visablity = visablity
+                rec.refcount = sym.refcount
 
 
 class PsgiHeader(ConstructClass):
@@ -105,11 +110,19 @@ class Symbols:
         self.byRecOffset = {}
         self.byAddress = {}
 
-        for rec in symbols:
-            self.symbols.append(rec)
-            self.byRecOffset[rec._addr] = rec
+        for i, rec in enumerate(symbols):
+            offset = rec._addr
+
+            # Strip the record wrapper
+            rec = rec.Data
+
+            rec.index = i
             rec.visablity = Visablity.Unknown
             rec.refcount = 0
+
+            self.symbols.append(rec)
+            self.byRecOffset[offset] = rec
+
 
     def fromOffset(self, offset):
         try:
@@ -117,11 +130,18 @@ class Symbols:
         except KeyError:
             return None
 
+    def __getitem__(self, index):
+        return self.symbols[index]
+
+    def __len__(self):
+        return len(self.symbols)
 
 def LoadSymbols(symbolRecordStream):
 
     symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,
             Aligned(4, CodeviewRecord)
         ).parse_stream(symbolRecordStream)
+
+
 
     return Symbols(symbols)

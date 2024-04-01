@@ -1,28 +1,48 @@
 
 from pdb_parser import *
+from gsi import *
 
 from intervaltree import Interval, IntervalTree
 
 def ext(filename : str):
     try:
-        return filename.split('.')[-1]
+        return filename.split('.')[-1].lower()
     except IndexError:
         return ''
+
+includes = {}
+
+class Include:
+    def __init__(self, filename):
+        self.filename = filename
+        self.modules = []
+        includes[filename] = self
+
+    def get(filename):
+        return includes.get(filename) or Include(filename)
 
 
 class Module:
     # Modules are (typically) .obj files that were linked into the exe
-    def __init__(self, idx, name, symbols, sources, linesInfo):
+    def __init__(self, idx, name, symbols, sources, linesInfo, contribs, globs):
         self.idx = idx
-        self.symbols = symbols
-        self.globalSymbols = {}
+        self.symbols_data = symbols
+        self.locals = []
+        self.globals = []
         try:
             self.sourceFile = [s for s in sources if ext(s) in ('cpp', 'c', 'asm') ].pop()
         except IndexError:
             self.sourceFile = None
         self.includes = [s for s in sources if ext(s) in ('h', 'hpp')]
         self.name = name
-        self.sectionContribs = []
+        self.sectionContribs = contribs
+
+        for contrib in self.sectionContribs:
+            contrib.module = self
+
+        for inc in self.includes:
+            i = Include.get(inc)
+            i.modules.append(self)
 
         if linesInfo:
             self.start = linesInfo.StartAddr
@@ -45,15 +65,30 @@ class Library:
         for m in self.modules:
             s += f"\n    {m.sourceFile or m.name }"
             for sc in m.sectionContribs:
-                s += f"\n        {sc.Section}:{sc.Offset:08x} {sc.Size:x}"
+                s += f"\n        {sc.Section}:{sc.Offset:08x} {sc.Size:x} {sc.characteristicsString()}"
 
         return s
+
+    def is_dll(self):
+        return len(self.modules) == 1 and ext(self.modules[0].name) == 'dll'
 
 class Section:
     def __init__(self, name, idx):
         self.name = name
         self.idx = idx
         self.contribs = IntervalTree()
+
+class UnknownContribs:
+    def __init__(self):
+        self.symbols = []
+        self.ModuleIndex = None
+        self.module = None
+
+    def __str__(self):
+        return f"Unknown contribs: {len(self.symbols)}"
+
+    def __getitem__(self, index):
+        return self.symbols[index]
 
 
 class Program:
@@ -68,9 +103,63 @@ class Program:
 
         self.libraries = { "" : top }
         self.modules = []
+        self.extra_globals = []
+
+        # Just hardcode these names now
+        self.sections = [
+            Section("Headers", 0),
+            Section(".text", 1),
+            Section(".rdata", 2),
+            Section(".data", 3),
+            Section(".idata", 4), # import descriptors
+            Section(".rsrc", 5), # resources
+            Section(".reloc" , 6), # relocation table
+            Section("unk", 7), # ???
+        ]
+
+        for e in dbi.SectionMap.Entries:
+            self.sections[e.Frame].size = e.SectionLength
+            #print(e)
+
+        module_contribs = [[] for _ in dbi.ModuleInfo]
+        for sc in dbi.SectionContribution:
+            # put section contributions into the correct modules
+            module_contribs[sc.ModuleIndex].append(sc)
+
+            # add to interval trees for quick lookup
+            section = self.sections[sc.Section]
+            section.contribs[sc.Offset : sc.Offset + sc.Size + 1] = sc
+
+        self.unknownContribs = UnknownContribs()
+
+        # The symbol record stream contains all globals (and public globals)
+        self.globals = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
+
+        # the only thing we really care about from GSI and PSGI is what visibility they apply to global symbols.
+        # Though in theory it might be possible to
+        gsi = Gsi.parse_stream(msf.getStream(dbi.Header.GlobalSymbolStream))
+        gsi.apply_visablity(Visablity.Global, self.globals)
+
+        pgsi = Pgsi.parse_stream(msf.getStream(dbi.Header.PublicSymbolStream))
+        pgsi.gsi.apply_visablity(Visablity.Public, self.globals)
+
+        module_globals = [[] for _ in dbi.ModuleInfo]
+        for sym in self.globals:
+            try:
+                getModuleId = sym.getModuleId
+            except AttributeError:
+                # TODO: These are enum constants (CONSTANT) AND typedefs (UserDefinedType)
+                #       We need to deal with them
+                continue
+
+            idx = getModuleId(self)
+            if idx:
+                module_globals[idx].append(sym)
+            else:
+                self.extra_globals.append(sym)
 
         # process all modules
-        for i, (modi, sources) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules)):
+        for i, (modi, sources, contribs, globs) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules, module_contribs, module_globals)):
 
             library = top
             name = modi.ModuleName.split('\\')[-1]
@@ -102,50 +191,17 @@ class Program:
                         #HexDump(GreedyBytes),
                     ))))
 
-                try:
-                    mod_details = moduleStream.parse_stream(mod_stream)
+                mod_details = moduleStream.parse_stream(mod_stream)
 
-                    symbols = mod_details.Symbols
-                    lines = mod_details.Lines
-                except:
-                    print(f"Error parsing module {sources}")
+                symbols = mod_details.Symbols
+                lines = mod_details.Lines
 
-
-            m = Module(i, name, symbols, sources, lines)
+            m = Module(i, name, symbols, sources, lines, contribs, globs)
 
             self.modules.append(m)
             library.modules.append(m)
             m.library = library
 
-        # Just hardcode these names now
-        self.sections = [
-            Section("Headers", 0),
-            Section(".text", 1),
-            Section(".rdata", 2),
-            Section(".data", 3),
-            Section(".idata", 4), # import descriptors
-            Section(".rsrc", 5), # resources
-            Section(".reloc" , 6), # relocation table
-        ]
-
-        for e in dbi.SectionMap.Entries:
-            self.sections[e.Frame].size = e.SectionLength
-            #print(e)
-
-        for sc in dbi.SectionContribution:
-            # put section contributions into the correct modules
-            m = self.modules[sc.ModuleIndex]
-            m.sectionContribs.append(sc)
-
-            # add to interval trees for quick lookup
-            section = self.sections[sc.Section]
-            section.contribs[sc.Offset : sc.Offset + sc.Size] = sc
-
-
-
-
-    def from_file(filename):
-        pdb = ProgramDatabase()
 
 if __name__ == "__main__":
     import sys
@@ -155,4 +211,46 @@ if __name__ == "__main__":
 
     p = Program(pdb_file)
     for lib in p.libraries.values():
+        if lib.is_dll() or lib.name in ["OLDNAMES.lib", "LIBCMTD.lib"]:
+            continue
         print(lib)
+        m = lib.modules[0]
+        print(m.symbols_data)
+
+
+    # for sym in p.unknownContribs:
+    #     print(sym)
+    #     for idx in range(sym.index - 1, 0, -1):
+    #         try:
+    #             contrib = p.globals[idx].contrib
+    #             if contrib.module:
+    #                 print(f"After {contrib.module.sourceFile}")
+    #                 break
+    #         except:
+    #             try:
+    #                 moduleId = p.globals[idx].getModuleId(p)
+    #                 if moduleId:
+    #                     print(f"After {p.modules[moduleId].sourceFile}")
+    #                     break
+    #             except AttributeError:
+    #                 continue
+    #     for idx in range(sym.index, len(p.globals)):
+    #         try:
+    #             contrib = p.globals[idx].contrib
+    #             if contrib.module:
+    #                 print(f"Before {contrib.module.sourceFile}\n")
+    #                 break
+    #         except:
+    #             try:
+    #                 moduleId = p.globals[idx].getModuleId(p)
+    #                 if moduleId:
+    #                     print(f"Before {p.modules[moduleId].sourceFile}\n")
+    #                     break
+    #             except AttributeError:
+    #                 continue
+
+
+    # for inc in includes.values():q
+    #     print(inc.filename)
+    #     for m in inc.modules:
+    #         print(f"    {m.sourceFile or m.name }")

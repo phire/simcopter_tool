@@ -84,26 +84,55 @@ class BpRelative(ConstructClass):
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
-DataSym = Struct(
-        "Offset" / Int32ul,
-        "Segment" / Int16ul,
-        "Type" / Int16ul,
-        "Name" / PascalString(Int8ul, "ascii"),
-    )
+def getContrib(sym, program):
+    try:
+        return sym.contrib
+    except AttributeError:
+        try:
+            section = program.sections[sym.Segment]
+        except KeyError:
+            raise Exception(f"Segment {sym.Segment} not found for symbol {sym}")
+
+        try:
+            contrib = section.contribs[sym.Offset].pop().data
+            sym.contribOffset = sym.Offset - contrib.Offset
+        except KeyError:
+            contrib = program.unknownContribs
+            sym.contribOffset = None
+
+        contrib.symbols.append(sym)
+        sym.contrib = contrib
+        return contrib
+
+class DataSym(ConstructClass):
+    subcon = Struct(
+            "Offset" / Int32ul,
+            "Segment" / Int16ul,
+            "Type" / Int16ul,
+            "Name" / PascalString(Int8ul, "ascii"),
+        )
+
+    def getContrib(self, program):
+        return getContrib(self, program)
+
+    def getModuleId(self, program):
+        contrib = getContrib(self, program)
+        return contrib.ModuleIndex
 
 @CVRec(0x201) # S_LDATA32_16t
-class LocalData(ConstructClass):
-    subcon = DataSym
+class LocalData(DataSym):
+    pass
 
 @CVRec(0x202) # S_GDATA32_16t
-class GlobalData(ConstructClass):
-    subcon = DataSym
+class GlobalData(DataSym):
+    pass
 
 @CVRec(0x203) # S_PUB32_16t
-class PublicData(ConstructClass):
-    subcon = DataSym
+class PublicData(DataSym):
+    pass
 
-ProcSym = Struct(
+class ProcSym(ConstructClass):
+    subcon = Struct(
         "pParent" / Int32ul,
         "pEnd" / Int32ul,
         "pNext" / Int32ul,
@@ -117,13 +146,20 @@ ProcSym = Struct(
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
+    def getContrib(self, program):
+        return getContrib(self, program)
+
+    def getModuleId(self, program):
+        contrib = getContrib(self, program)
+        return contrib.ModuleIndex
+
 @CVRec(0x204) # S_LPROC32_16t
-class LocalProcedureStart(ConstructClass):
-    subcon = ProcSym
+class LocalProcedureStart(ProcSym):
+    pass
 
 @CVRec(0x205) # S_GPROC32_16t
-class GlobalProcedureStart(ConstructClass):
-    subcon = ProcSym
+class GlobalProcedureStart(ProcSym):
+    pass
 
 @CVRec(0x207) # S_BLOCK32
 class BlockStart(ConstructClass):
@@ -146,28 +182,32 @@ class CodeLabel(ConstructClass):
     ))
 
 
-# This doesn't match microsoft's documentation, where RefSym doesn't have a name.
-# Instead, vc++ 4.1 seems to output a corrupted record where the length matches RefSym2,
-# but the name actually exists. This means the length of this record is far too short.
-RefSym = Struct(
-    "SucOfName" / Int32ul, # I have no idea what "SUC" is, always appears to be zero
-    "SymbolOffset" / Int32ul,  # offset into $$Symbols table (I think this is the local symbols of the referenced module)
-    "ModuleId" / Int16ul,  # Module containing actual symbol
-    "Fill"    /  Int16ul,  # is this just padding?
-    "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name that has been made a first class member
-)
+class RefSym(ConstructClass):
+    # This doesn't match microsoft's documentation, where RefSym doesn't have a name.
+    # Instead, vc++ 4.1 seems to output a corrupted record where the length matches RefSym2,
+    # but the name actually exists. This means the length of this record is far too short.
+    subcon = Struct(
+        "SucOfName" / Int32ul, # I have no idea what "SUC" is, always appears to be zero
+        "SymbolOffset" / Int32ul,  # offset into $$Symbols table (I think this is the local symbols of the referenced module)
+        "ModuleId" / Int16ul,  # Module containing actual symbol
+        "Fill"    /  Int16ul,  # is this just padding?
+        "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name that has been made a first class member
+    )
+
+    def getModuleId(self, program):
+        return self.ModuleId
 
 @CVRec(0x0400) # S_PROCREF_ST
-class ProcRef(ConstructClass):
-    subcon = RefSym
+class ProcRef(RefSym):
+    pass
 
 @CVRec(0x0401) # S_DATAREF_ST
-class DataRef(ConstructClass):
-    subcon = RefSym
+class DataRef(RefSym):
+    pass
 
 @CVRec(0x0403) # S_LPROCREF_ST
-class LocalProcRef(ConstructClass):
-    subcon = RefSym
+class LocalProcRef(RefSym):
+    pass
 
 
 @CVRec(0x040a) # LF_VFUNCTAB_16t
