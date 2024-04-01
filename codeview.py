@@ -1,6 +1,9 @@
 from construct import *
 from constructutils import *
 
+from typing import *
+import textwrap
+
 # Some fields used this variable length integer encoding
 #   If the 16bit "typeOrVal" value is less than 0x8000, then the value is inlined (This might be limited to 8 bit values)
 #   Otherwise, it is treated as a type and a value of that type follows
@@ -79,7 +82,7 @@ class ObjName(ConstructClass):
 @CVRec(0x200) # S_BPREL32_16t
 class BpRelative(ConstructClass):
     subcon = Struct(
-        "Offset" / Int32ul,
+        "Offset" / Int32sl,
         "Type" / Int16ul,
         "Name" / PascalString(Int8ul, "ascii"),
     )
@@ -238,3 +241,44 @@ class CodeviewRecord(ConstructClass):
     def parsed(self, ctx):
         pass
         #print(f"Record: {self.RecordLength} {self.RecordType:04x}\n\t{self.Data}")
+
+def split_list(lst, pred):
+    for i, item in enumerate(lst):
+        if pred(item):
+            return lst[:i], lst[i+1:]
+    return [], lst
+
+
+def toTree(records: List[CodeviewRecord]):
+    tree = []
+
+    while len(records) > 0:
+        #print("Records:", len(records))
+        #print(records)
+        record = records.pop(0).Data
+        #pEnd = 0
+        try:
+            pEnd = record.pEnd
+        except:
+            # This record has no children
+            tree.append(record)
+            continue
+
+        children, records = split_list(records, lambda x: x._addr == pEnd)
+        #print("Children:", len(children))
+        record._children = toTree(children)
+        tree.append(record)
+
+    return tree
+
+
+def printTree(tree, indent=0):
+    for node in tree:
+        print(textwrap.indent(f"{node}", " " * indent * 4))
+
+        try:
+            children = node._children
+        except:
+            continue
+
+        printTree(children, indent + 1)

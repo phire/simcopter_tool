@@ -213,9 +213,12 @@ if __name__ == "__main__":
     for lib in p.libraries.values():
         if lib.is_dll() or lib.name in ["OLDNAMES.lib", "LIBCMTD.lib"]:
             continue
-        print(lib)
+        #print(lib)
         m = lib.modules[0]
-        print(m.symbols_data)
+        #print(m.symbols_data)
+
+        tree = toTree(list(m.symbols_data.Records))
+        printTree(tree)
 
 
     # for sym in p.unknownContribs:
