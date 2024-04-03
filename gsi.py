@@ -73,6 +73,9 @@ class Gsi(ConstructClass):
                 rec.visablity = visablity
                 rec.refcount = sym.refcount
 
+    def sizeof(self):
+        return len(self.all_hashes) * HRFile.sizeof() + 4097 * Int32ul.sizeof()
+
 
 class PsgiHeader(ConstructClass):
 

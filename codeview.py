@@ -7,7 +7,8 @@ import textwrap
 # Some fields used this variable length integer encoding
 #   If the 16bit "typeOrVal" value is less than 0x8000, then the value is inlined (This might be limited to 8 bit values)
 #   Otherwise, it is treated as a type and a value of that type follows
-VarInt = FocusedSeq("value",
+class VarInt(ConstructClass):
+    subcon = Struct(
             "typeOrVal" / Int16ul,
             "value" / Switch(this.typeOrVal,
                 {
@@ -93,7 +94,7 @@ def getContrib(sym, program):
     except AttributeError:
         try:
             section = program.sections[sym.Segment]
-        except KeyError:
+        except IndexError:
             raise Exception(f"Segment {sym.Segment} not found for symbol {sym}")
 
         try:
