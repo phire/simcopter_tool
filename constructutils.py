@@ -195,10 +195,11 @@ class ReloadableConstructMeta(ReloadableMeta, Construct):
 
         cls.docs = None
 
-        cls._off = {}
-        cls._fixed_sized = True
         if "subcon" not in attrs:
             return cls
+
+        cls._off = {}
+        cls._fixed_sized = True
 
         subcon = attrs["subcon"]
         if isinstance(subcon, Struct):
@@ -219,9 +220,66 @@ class ReloadableConstructMeta(ReloadableMeta, Construct):
                     cls._off[name] = off, sizeof
                 if sizeof is None:
                     cls._fixed_sized = False
-                    break
-                off += sizeof
+                    off = None
+
+                if off:
+                    off += sizeof
+
         return cls
+
+def sizeof_struct(subcon, value, parent=None):
+    ctx = Container(value)
+    ctx._ = parent or Container()
+    ctx._params = Container()
+    ctx._parsing = False
+    ctx._sizing = True
+    ctx._building = False
+
+    size = 0
+    for sc in subcon.subcons:
+        if sc.name:
+            size += sizeof(sc.subcon, ctx[sc.name], parent=ctx)
+        else:
+            size += sc._sizeof(ctx, "(sizeof)")
+
+    return size
+
+
+def sizeof(subcon, value, parent=None):
+    if not parent or not hasattr(parent, "_params"):
+        parent = Container(parent) if parent else Container()
+        parent._params = Container()
+        parent._parsing = False
+        parent._sizing = True
+        parent._building = False
+
+    try:
+        return subcon._sizeof(parent, "(sizeof)")
+    except SizeofError:
+        pass
+
+
+    if isinstance(subcon, (Hex, Dec, HexDump, Aligned, StringEncoded, OffsettedEnd)):
+        return sizeof(subcon.subcon, value, parent)
+    if isinstance(subcon, (GreedyRange, RepeatUntil)):
+        subcon = subcon.subcon
+        itemsize = subcon.sizeof()
+        if itemsize:
+            return len(value) * itemsize
+        elif value and hasattr(value[name][0], "sizeof"):
+            return sum([x.sizeof() for x in value])
+        else:
+            return sum([sizeof(subcon, x, parent) for x in value])
+    if subcon == GreedyBytes:
+        return len(value)
+    if isinstance(subcon, Prefixed):
+        return subcon.lengthfield.sizeof() + len(value)
+    if isinstance(subcon, NullTerminated):
+        return sizeof(subcon.subcon, value, parent) + 1
+    if isinstance(subcon, Struct):
+        return sizeof_struct(subcon, value, parent)
+
+    raise Exception(f"Don't know how to calculate size for {subcon}, {value}")
 
 class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
     """ Offers two benifits over regular construct
@@ -251,6 +309,7 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         self._pointers = set()
         self._addr = None
         self._meta = {}
+        object.__setattr__(self, "sizeof", self.obj_sizeof)
 
     def regmap(self):
         return ConstructRegMap(type(self), self._stream.to_accessor(), self._addr)
@@ -263,6 +322,12 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         context._sizing = True
         context._params = context
         return cls._sizeof(context, "(sizeof)")
+
+    def obj_sizeof(self):
+        try:
+            return self._size
+        except AttributeError:
+            return sizeof(self.subcon, self)
 
     def Apply(self, dict=None, **kwargs):
         if dict is None:
@@ -363,10 +428,9 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         #print(f"parse {cls} @ {stream.tell():#x} {path}")
         addr = stream.tell()
         obj = cls.subcon._parse(stream, context, path)
-        size = stream.tell() - addr
 
-        # Don't instance Selects
-        if isinstance(cls.subcon, Select):
+        # Don't instance Selects (and other raw subcons)
+        if not isinstance(obj, Container):
             return obj
 
         # Skip calling the __init__ constructor, so that it can be used for building
@@ -375,36 +439,66 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         self._addr = addr
         self._path = path
         self._meta = {}
+        self._size = stream.tell() - addr
+        if self.sizeof.__func__ == ConstructClassBase.sizeof.__func__:
+            object.__setattr__(self, "sizeof", self.obj_sizeof)
 
         if not cls._fixed_sized:
             # rerun the offset calculation, now we have actual data
 
-            ctx = Container(obj)
-            ctx._ = context
-            ctx._params = context._params
-            ctx._parsing = True
-            ctx._sizing = True
-            ctx._building = False
+            top_ctx = obj.copy()
+            top_ctx._ = context
+            top_ctx._params = context._params
+            top_ctx._parsing = True
+            top_ctx._sizing = True
+            top_ctx._building = False
 
             off = 0
             for subcon in cls.subcon.subcons:
-                sizeof = subcon._actualsize(stream, ctx, "(sizeof)")
+                name = None
+                ctx = top_ctx
+                size = None
+
                 if isinstance(subcon, Ver):
                     if not subcon._active():
                         continue
                     subcon = subcon.subcon
+
                 if isinstance(subcon, Renamed):
                     name = subcon.name
-                    self._off[name] = off, sizeof
+                    subcon = subcon.subcon
 
-                off += sizeof
+                    const_off, size = self._off[name]
+
+                    if const_off and size:
+                        off = const_off + size
+                        continue
+
+                    if size:
+                        if name:
+                            self._off[name] = off, size
+                        off += size
+                        continue
+                else:
+                    size = subcon._sizeof(ctx, "(sizeof)")
+
+                if not size:
+                    if isinstance(ctx[name], ConstructClass):
+                        size = ctx[name].sizeof()
+                    else:
+                        size = sizeof(subcon, ctx[name], parent=ctx)
+
+                if name:
+                    self._off[name] = off, size
+
+                off += size
 
         self._apply(obj)
 
         cls._set_meta(self, stream)
 
         if self._addr > 0x10000:
-            desc = f"{cls.name} (end: {self._addr + size:#x})"
+            desc = f"{cls.name} (end: {self._addr + self._size:#x})"
             if getattr(stream, "meta_fn", None):
                 meta = stream.meta_fn(self._addr, None)
                 if meta is not None:
@@ -563,7 +657,6 @@ class ConstructClass(ConstructClassBase, Container):
             value = getattr(self, key)
             val_repr = str_value(value, repr=True)
             print(f"self.{key} = {val_repr}")
-
 
     @classmethod
     def _build_prepare(cls, obj):
