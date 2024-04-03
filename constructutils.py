@@ -196,6 +196,7 @@ class ReloadableConstructMeta(ReloadableMeta, Construct):
         cls.docs = None
 
         cls._off = {}
+        cls._fixed_sized = True
         if "subcon" not in attrs:
             return cls
 
@@ -217,6 +218,7 @@ class ReloadableConstructMeta(ReloadableMeta, Construct):
                     subcon = subcon.subcon
                     cls._off[name] = off, sizeof
                 if sizeof is None:
+                    cls._fixed_sized = False
                     break
                 off += sizeof
         return cls
@@ -325,16 +327,14 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
             self._stream = stream
 
         if isinstance(cls.subcon, Struct):
-            subaddr = int(self._addr)
+            base_addr = int(self._addr)
             for subcon in cls.subcon.subcons:
-                try:
-                    sizeof = subcon.sizeof()
-                except:
-                    break
                 if isinstance(subcon, Ver):
                     subcon = subcon.subcon
                 if isinstance(subcon, Renamed):
                     name = subcon.name
+                    offset, sizeof = self._off[name]
+                    subaddr = base_addr + offset
                     #print(name, subcon)
                     subcon = subcon.subcon
                     if stream is not None and getattr(stream, "meta_fn", None):
@@ -358,8 +358,6 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
                                     i.set_addr(subaddr)
                                     subaddr += i.sizeof()
 
-                subaddr += sizeof
-
     @classmethod
     def _parse(cls, stream, context, path):
         #print(f"parse {cls} @ {stream.tell():#x} {path}")
@@ -377,9 +375,33 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         self._addr = addr
         self._path = path
         self._meta = {}
-        cls._set_meta(self, stream)
+
+        if not cls._fixed_sized:
+            # rerun the offset calculation, now we have actual data
+
+            ctx = Container(obj)
+            ctx._ = context
+            ctx._params = context._params
+            ctx._parsing = True
+            ctx._sizing = True
+            ctx._building = False
+
+            off = 0
+            for subcon in cls.subcon.subcons:
+                sizeof = subcon._actualsize(stream, ctx, "(sizeof)")
+                if isinstance(subcon, Ver):
+                    if not subcon._active():
+                        continue
+                    subcon = subcon.subcon
+                if isinstance(subcon, Renamed):
+                    name = subcon.name
+                    self._off[name] = off, sizeof
+
+                off += sizeof
 
         self._apply(obj)
+
+        cls._set_meta(self, stream)
 
         if self._addr > 0x10000:
             desc = f"{cls.name} (end: {self._addr + size:#x})"
