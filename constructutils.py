@@ -222,7 +222,7 @@ class ReloadableConstructMeta(ReloadableMeta, Construct):
                     cls._fixed_sized = False
                     off = None
 
-                if off:
+                if off is not None:
                     off += sizeof
 
         return cls
