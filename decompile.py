@@ -17,20 +17,35 @@ class Include:
     def __init__(self, filename):
         self.filename = filename
         self.modules = []
+        self.functions = []
         includes[filename] = self
 
     def get(filename):
         return includes.get(filename) or Include(filename)
+
+class Function:
+    def __init__(self, program, module, symbols, lines, contrib):
+        self.module = module
+        self.source_file = module.sourceFile
+        self.symbols = symbols
+        self.lines = lines
+        self.name = symbols.Name
+        self.contrib = contrib
+
+        self.length = symbols.Len
+        segment = program.sections[symbols.Segment]
+        self.address = segment.va + symbols.Offset
 
 
 class Module:
     # Modules are (typically) .obj files that were linked into the exe
     def __init__(self, program, library, idx, name, symbols, sources, linesInfo, contribs, globs):
         self.idx = idx
-        self.symbols_data = symbols
         self.library = library
+
         self.locals = []
-        self.globals = []
+        self.globals = globs
+        self.functions = {}
         try:
             self.sourceFile = [s for s in sources if ext(s) in ('cpp', 'c', 'asm') ].pop()
         except IndexError:
@@ -50,13 +65,58 @@ class Module:
         for inc in self.includes.values():
             inc.modules.append(self)
 
+        lines_map = IntervalTree()
+
         if linesInfo:
             self.start = linesInfo.StartAddr
             self.end = linesInfo.EndAddr
             self.flags = linesInfo.Flags
 
             for file in linesInfo.Files:
-                pass
+                lines_map.update(file.children)
+
+        for sym in symbols or []:
+            if isinstance(sym, (ObjName, CompileFlags)):
+                continue
+
+            if isinstance(sym, (LocalProcedureStart, GlobalProcedureStart)):
+                start, end = sym.Offset, sym.Offset + sym.Len
+                try:
+                    contrib = program.sections[sym.Segment].contribs[start:end].pop().data
+                    contrib = (contrib, start - contrib.Offset)
+                except KeyError:
+                    # TODO: We should probally create a new contrib when this happens
+                    contrib = None
+
+                try:
+                    source_file, lines = lines_map[sym.Offset].pop().data
+                except KeyError:
+                    source_file, lines = None, {}
+
+                # trim lines, convert to relative offsets
+                lines = {off - start: ln for off, ln in lines.items() if off >= start and off < end}
+
+                fn = Function(program, self, sym, lines, contrib)
+
+                self.functions[fn.name] = fn
+
+                if source_file != self.sourceFile:
+                    fn.source_file = source_file
+                    try:
+                        self.includes[source_file].functions.append(fn)
+                    except KeyError:
+                        pass
+            elif isinstance(sym, Thunk):
+                self.functions[sym.Name] = sym
+            elif isinstance(sym, CodeLabel):
+                # These only show up in libc, so just ignore those
+                if self.library.name in ("LIBCMTD.lib"):
+                    continue
+                else:
+                    raise Exception(f"unexpected CodeLabel {sym} in {self.name}")
+            else:
+                raise Exception(f"Unknown root symbol type {sym} in {self.name}")
+
 
 class Library:
     # multiple .obj files might be pre-linked into a library
@@ -222,7 +282,7 @@ class Program:
 
                 mod_details = moduleStream.parse_stream(mod_stream)
 
-                symbols = mod_details.Symbols
+                symbols = toTree(list(mod_details.Symbols.Records)) if mod_details.Symbols else None
                 lines = mod_details.Lines
 
             m = Module(self, library, i, name, symbols, sources, lines, contribs, globs)
@@ -247,9 +307,8 @@ if __name__ == "__main__":
 
     game = p.libraries["game.lib"]
     police = game.modules["s3police.cpp"]
+    createfn = police.functions["PoliceCarClass::CreateInstance"]
 
-        tree = toTree(list(m.symbols_data.Records))
-        printTree(tree)
 
 
     # for sym in p.unknownContribs:

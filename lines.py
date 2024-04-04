@@ -2,6 +2,7 @@ from construct import *
 from construct.debug import Probe
 from constructutils import *
 
+from intervaltree import Interval, IntervalTree
 
 class Lines(ConstructClass):
     subcon = Struct(
@@ -25,8 +26,17 @@ class File(ConstructClass):
             "End" / Hex(Int32ul),
         )),
         "SourceFile" / PascalString(Int8ul, "ascii"),
-
     )
+
+    def parsed(self, ctx):
+        self.children = IntervalTree()
+        for lines, subrange in zip(self.Children, self.ChildrenSubranges):
+            lines = { k: v for k, v in zip(lines.LineOffset, lines.LineNumbers) }
+            self.children[int(subrange.Start) : subrange.End + 1] = (self.SourceFile, lines)
+
+        del self.SubrangeCount
+        del self.Children
+        del self.ChildrenSubranges
 
 class LinesSection(ConstructClass):
     subcon = Struct(
@@ -42,3 +52,4 @@ class LinesSection(ConstructClass):
         "EndAddr" / Int32ul,
         "Flags" / Int16ul,
     )
+

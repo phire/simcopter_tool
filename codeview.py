@@ -165,6 +165,28 @@ class LocalProcedureStart(ProcSym):
 class GlobalProcedureStart(ProcSym):
     pass
 
+@CVRec(0x206) # S_THUNK32
+class Thunk(ConstructClass):
+    # These are functions imported by dlls
+    subcon = Struct(
+        "pParent" / Int32ul,
+        "pEnd" / Int32ul,
+        "pNext" / Int32ul,
+        "Offset" / Int32ul,
+        "Segment" / Int16ul,
+        "Len" / Int16ul,
+        "Ordinal" / Int8ul,
+        "Name" / PascalString(Int8ul, "ascii"),
+        "variant" / HexDump(GreedyBytes)
+    )
+
+    def getContrib(self, program):
+        return getContrib(self, program)
+
+    def getModuleId(self, program):
+        contrib = getContrib(self, program)
+        return contrib.ModuleIndex
+
 @CVRec(0x207) # S_BLOCK32
 class BlockStart(ConstructClass):
     subcon = Struct(
@@ -234,8 +256,8 @@ class CodeviewRecord(ConstructClass):
         ),
         StopIf(lambda ctx: ctx.RecordLength < 2),
         "Data" / FixedSized(this._length_fixed, Switch(this.RecordType, CVSwitch,
-            default=HexDump(GreedyBytes)
-            #default=Error
+            #default=HexDump(GreedyBytes)
+            default=Error
         )),
     ))
 
