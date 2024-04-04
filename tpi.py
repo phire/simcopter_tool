@@ -348,7 +348,7 @@ class LfOneMethod(ConstructClass):
 
 
 class TypeRecord(ConstructClass):
-    subcon = Debugger(Aligned(4, Struct(
+    subcon = Aligned(4, Struct(
         "Length" / Int16ul,
         "Type" / Int16ul,
         "Data" / FixedSized(this.Length - 2, Switch(this.Type, TpSwitch,
@@ -356,7 +356,7 @@ class TypeRecord(ConstructClass):
             default=Error
         ))
         )
-    ))
+    )
 
     def parsed(self, ctx):
         #print(f"TypeRecord: {self.Type:04x} {self.Data}")
@@ -387,21 +387,22 @@ class TypeInfomation(ConstructClass):
     )
 
     def parsed(self, ctx):
-        print(f"Loaded {len(self.Records)} type records")
+        #print(f"Loaded {len(self.Records)} type records", file=sys.stderr)
+
 
         # TODO: Fill in all the built-in types
         self.types = [None] * self.MinimumTI
         self.byRecOffset = {}
 
         for rec in self.Records:
-            print(f"{rec._addr:04x} {rec}")
+            #print(f"{rec._addr:04x} {rec}")
             rec.isGlobal = False
             rec.isPublic = False
             self.types += [rec]
             self.byRecOffset[rec._addr] = rec
 
-        for k, v in self.byRecOffset.items():
-            print(f"{k:x} {v}")
+        #for k, v in self.byRecOffset.items():
+            #print(f"{k:x} {v}")
 
     def fromOffset(self, offset):
         try:

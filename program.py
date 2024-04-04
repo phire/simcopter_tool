@@ -2,6 +2,7 @@
 
 from pdb_parser import *
 from gsi import *
+from tpi import TypeInfomation
 from coff import Executable
 from intervaltree import Interval, IntervalTree
 
@@ -204,6 +205,8 @@ class Program:
 
         self.unknownContribs = UnknownContribs()
 
+        # The type records are always in stream 2
+        self.types = TypeInfomation.parse_stream(msf.getStream(2))
         # The symbol record stream contains all globals (and public globals)
         self.globals = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
 

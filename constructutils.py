@@ -246,6 +246,9 @@ def sizeof_struct(subcon, value, parent=None):
 
 
 def sizeof(subcon, value, parent=None):
+    if isinstance(subcon, (Hex, Dec, HexDump, Aligned, StringEncoded, OffsettedEnd, Debugger)):
+        return sizeof(subcon.subcon, value, parent)
+
     if not parent or not hasattr(parent, "_params"):
         parent = Container(parent) if parent else Container()
         parent._params = Container()
@@ -258,16 +261,11 @@ def sizeof(subcon, value, parent=None):
     except SizeofError:
         pass
 
-
-    if isinstance(subcon, (Hex, Dec, HexDump, Aligned, StringEncoded, OffsettedEnd)):
-        return sizeof(subcon.subcon, value, parent)
-    if isinstance(subcon, (GreedyRange, RepeatUntil)):
+    if isinstance(subcon, (GreedyRange, RepeatUntil, Array)):
         subcon = subcon.subcon
         itemsize = subcon.sizeof()
         if itemsize:
             return len(value) * itemsize
-        elif value and hasattr(value[name][0], "sizeof"):
-            return sum([x.sizeof() for x in value])
         else:
             return sum([sizeof(subcon, x, parent) for x in value])
     if subcon == GreedyBytes:
@@ -278,8 +276,17 @@ def sizeof(subcon, value, parent=None):
         return sizeof(subcon.subcon, value, parent) + 1
     if isinstance(subcon, Struct):
         return sizeof_struct(subcon, value, parent)
+    if isinstance(subcon, Switch):
+        keyfunc = evaluate(subcon.keyfunc, parent)
+        sc = subcon.cases.get(keyfunc, subcon.default)
+        return sizeof(sc, value, parent)
+    if isinstance(value, ConstructClass):
+        try:
+            return sizeof(subcon.subcon, value, parent)
+        except AttributeError:
+            pass
 
-    raise Exception(f"Don't know how to calculate size for {subcon}, {value}")
+    raise Exception(f"Don't know how to calculate size for {subcon}")
 
 class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
     """ Offers two benifits over regular construct
@@ -321,7 +328,10 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         context._building = False
         context._sizing = True
         context._params = context
-        return cls._sizeof(context, "(sizeof)")
+        try:
+            return cls._sizeof(context, "(sizeof)")
+        except SizeofError:
+            return None
 
     def obj_sizeof(self):
         try:
@@ -393,35 +403,38 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
 
         if isinstance(cls.subcon, Struct):
             base_addr = int(self._addr)
+            stream_has_meta = stream is not None and hasattr(stream, "meta_fn")
             for subcon in cls.subcon.subcons:
                 if isinstance(subcon, Ver):
                     subcon = subcon.subcon
                 if isinstance(subcon, Renamed):
                     name = subcon.name
                     offset, sizeof = self._off[name]
+                    if offset is None:
+                        continue
                     subaddr = base_addr + offset
                     #print(name, subcon)
                     subcon = subcon.subcon
-                    if stream is not None and getattr(stream, "meta_fn", None):
+                    if stream_has_meta:
                         meta = stream.meta_fn(subaddr, sizeof)
                         if meta is not None:
                             self._meta[name] = meta
                     if isinstance(subcon, Pointer):
                         self._pointers.add(name)
                         continue
-                    try:
-                        #print(name, subcon)
-                        val = self[name]
-                    except:
-                        pass
-                    else:
-                        if isinstance(val, ConstructClassBase):
-                            val.set_addr(subaddr)
-                        if isinstance(val, list):
-                            for i in val:
-                                if isinstance(i, ConstructClassBase):
-                                    i.set_addr(subaddr)
-                                    subaddr += i.sizeof()
+                    # try:
+                    #     #print(name, subcon)
+                    #     val = self[name]
+                    # except:
+                    #     pass
+                    # else:
+                    #     if isinstance(val, ConstructClassBase):
+                    #         val.set_addr(subaddr)
+                    #     if isinstance(val, list):
+                    #         for i in val:
+                    #             if isinstance(i, ConstructClassBase):
+                    #                 i.set_addr(subaddr)
+                    #                 subaddr += i.sizeof()
 
     @classmethod
     def _parse(cls, stream, context, path):
@@ -580,7 +593,7 @@ class ConstructClass(ConstructClassBase, Container):
             if key in self._off:
                 offv, sizeof = self._off[key]
                 if offv == -1:
-                    print(key, offv, sizeof)
+                    #print(key, offv, sizeof)
                     continue
             if key in ignore or key.startswith('_'):
                 continue
@@ -691,17 +704,17 @@ class ConstructClass(ConstructClassBase, Container):
     def _parse(cls, stream, context, path):
         self = ConstructClassBase._parse.__func__(cls, stream, context, path)
 
-        for key in self:
-            if key.startswith('_'):
-                continue
-            try:
-                val = int(self[key])
-            except:
-                continue
-            if (0x1000000000 <= val <= 0x1f00000000 or
-                0xf8000000000 <= val <= 0xff000000000 or
-                0xffffff8000000000 <= val <= 0xfffffff000000000):
-                g_struct_trace.add((val, f"{cls.name}.{key}"))
+        # for key in self:
+        #     if key.startswith('_'):
+        #         continue
+        #     try:
+        #         val = int(self[key])
+        #     except:
+        #         continue
+        #     if (0x1000000000 <= val <= 0x1f00000000 or
+        #         0xf8000000000 <= val <= 0xff000000000 or
+        #         0xffffff8000000000 <= val <= 0xfffffff000000000):
+        #         g_struct_trace.add((val, f"{cls.name}.{key}"))
         return self
 
     def _apply_classful(self, obj):
@@ -783,6 +796,18 @@ class ConstructClass(ConstructClassBase, Container):
                 except:
                     break
         return False
+
+    # def __getstate__(self):
+    #     state = self.copy()
+    #     # Don't pickle io
+    #     try:
+    #         del state["_io"]
+    #     except:
+    #         pass
+    #     return state
+
+    # def __setstate__(self, state):
+    #     self.update(state)
 
     @classmethod
     def to_rust(cls):
