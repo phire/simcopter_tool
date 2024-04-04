@@ -4,6 +4,8 @@ from gsi import *
 
 from intervaltree import Interval, IntervalTree
 from coff import Executable
+from itertools import pairwise, chain
+import x86
 
 def ext(filename : str):
     try:
@@ -35,6 +37,24 @@ class Function:
         self.length = symbols.Len
         segment = program.sections[symbols.Segment]
         self.address = segment.va + symbols.Offset
+
+    def data(self):
+        contrib, offset = self.contrib
+        length = self.symbols.Len
+        return contrib._data[offset: offset+length]
+
+    def disassemble(self):
+        data = self.data()
+
+        print(f"{self.source_file} {self.name} @ {self.address:08x}")
+        for (start, line), (end, _) in pairwise(chain(self.lines.items(), [(self.length+1, None)])):
+            insts = x86.disassemble(data[start:end], self.address + start)
+            inst = insts[0]
+            print(f"line {line}:")
+            for inst in insts:
+                print(f"      {inst.ip32:08x}    {inst}")
+
+
 
 
 class Module:
@@ -309,6 +329,10 @@ if __name__ == "__main__":
     police = game.modules["s3police.cpp"]
     createfn = police.functions["PoliceCarClass::CreateInstance"]
 
+    #createfn.disassemble()
+
+    scanfn = police.functions["PoliceCarClass::ScanForBadGuys"]
+    scanfn.disassemble()
 
 
     # for sym in p.unknownContribs:
