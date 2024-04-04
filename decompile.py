@@ -3,6 +3,7 @@ from pdb_parser import *
 from gsi import *
 
 from intervaltree import Interval, IntervalTree
+from coff import Executable
 
 def ext(filename : str):
     try:
@@ -73,9 +74,12 @@ class Library:
         return len(self.modules) == 1 and ext(self.modules[0].name) == 'dll'
 
 class Section:
-    def __init__(self, name, idx):
-        self.name = name
+    def __init__(self, idx, section):
         self.idx = idx
+        if section:
+            self.name = section.Name
+            self.va = 0x400000 + section.VirtualAddress
+            self.data = section.Data
         self.contribs = IntervalTree()
 
 class UnknownContribs:
@@ -92,7 +96,7 @@ class UnknownContribs:
 
 
 class Program:
-    def __init__(self, filename):
+    def __init__(self, filename, exe):
         f = open(filename, "rb")
         msf = MsfFile.parse_stream(f)
 
@@ -105,17 +109,7 @@ class Program:
         self.modules = []
         self.extra_globals = []
 
-        # Just hardcode these names now
-        self.sections = [
-            Section("Headers", 0),
-            Section(".text", 1),
-            Section(".rdata", 2),
-            Section(".data", 3),
-            Section(".idata", 4), # import descriptors
-            Section(".rsrc", 5), # resources
-            Section(".reloc" , 6), # relocation table
-            Section("unk", 7), # ???
-        ]
+        self.sections = [ Section(0, None) ] + [ Section(i + 1, s) for i, s in enumerate(exe.Sections) ] + [ Section(7, None) ]
 
         for e in dbi.SectionMap.Entries:
             self.sections[e.Frame].size = e.SectionLength
@@ -129,6 +123,7 @@ class Program:
             # add to interval trees for quick lookup
             section = self.sections[sc.Section]
             section.contribs[sc.Offset : sc.Offset + sc.Size + 1] = sc
+            sc._data = section.data[sc.Offset : sc.Offset + sc.Size]
 
         self.unknownContribs = UnknownContribs()
 
@@ -209,7 +204,9 @@ if __name__ == "__main__":
     pdb_file = "../debug_build_beta/COPTER_D.PDB"
     exe_file = "../debug_build_beta/COPTER_D.EXE"
 
-    p = Program(pdb_file)
+    exe = Executable(exe_file)
+
+    p = Program(pdb_file, exe)
     for lib in p.libraries.values():
         if lib.is_dll() or lib.name in ["OLDNAMES.lib", "LIBCMTD.lib"]:
             continue

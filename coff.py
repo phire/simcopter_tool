@@ -162,7 +162,7 @@ class Section(ConstructClass):
             self.Data = self.Data[:self.VirtualSize]
 
 
-class Executable(ConstructClass):
+class WindowsExe(ConstructClass):
     subcon = Struct(
         "Dos" / MzHeader,
         "Coff" / Pointer(this.Dos.PeOffset, CoffHeader),
@@ -178,13 +178,12 @@ class Executable(ConstructClass):
         ),
     )
 
-class Exe:
-    def __init__(self, filename):
-        with open(filename, "rb") as f:
-            self.exe = Executable.parse_stream(f)
+def Executable(filename):
+    with open(filename, "rb") as f:
+        return WindowsExe.parse_stream(f)
 
 if __name__ == "__main__":
     exe_file = "../debug_build_beta/COPTER_D.EXE"
 
-    exe = Exe(exe_file)
-    print(exe.exe)
+    exe = Executable(exe_file)
+    print(exe)
