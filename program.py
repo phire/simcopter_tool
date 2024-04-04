@@ -1,4 +1,5 @@
 
+import sys, time
 
 from pdb_parser import *
 from gsi import *
@@ -179,7 +180,7 @@ class Program:
 
         dbi = DebugInfomation.parse_stream(msf.getStream(0x3))
 
-        # For any modules not in a library, directly linked into the executable
+        # dummy library to hold modules not in a library, directly linked into the executable
         top = Library("", "")
 
         self.libraries = { "" : top }
@@ -205,17 +206,34 @@ class Program:
 
         self.unknownContribs = UnknownContribs()
 
+
+        print("parsing types...    ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
         # The type records are always in stream 2
         self.types = TypeInfomation.parse_stream(msf.getStream(2))
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        print("parsing GSI/PGSI... ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
+        # the only thing we really care about from GSI and PSGI is what visibility they apply to global symbols.
+        # Though in theory it might be possible to learn something about the ordering
+
+        gsi = Gsi.parse_stream(msf.getStream(dbi.Header.GlobalSymbolStream))
+        pgsi = Pgsi.parse_stream(msf.getStream(dbi.Header.PublicSymbolStream))
+
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        print(f"parsing symbols...  ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
         # The symbol record stream contains all globals (and public globals)
         self.globals = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
 
-        # the only thing we really care about from GSI and PSGI is what visibility they apply to global symbols.
-        # Though in theory it might be possible to
-        gsi = Gsi.parse_stream(msf.getStream(dbi.Header.GlobalSymbolStream))
         gsi.apply_visablity(Visablity.Global, self.globals)
-
-        pgsi = Pgsi.parse_stream(msf.getStream(dbi.Header.PublicSymbolStream))
         pgsi.gsi.apply_visablity(Visablity.Public, self.globals)
 
         module_globals = [[] for _ in dbi.ModuleInfo]
@@ -232,6 +250,12 @@ class Program:
                 module_globals[idx].append(sym)
             else:
                 self.extra_globals.append(sym)
+
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        print(f"parsing modules...  ", file=sys.stderr, end='', flush=True)
+        now = time.time()
 
         # process all modules
         for i, (modi, sources, contribs, globs) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules, module_contribs, module_globals)):
@@ -275,6 +299,9 @@ class Program:
 
             self.modules.append(m)
             library.addModule(m)
+
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
 
 
     def getInclude(self, filename):
