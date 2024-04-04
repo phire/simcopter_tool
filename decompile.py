@@ -25,25 +25,30 @@ class Include:
 
 class Module:
     # Modules are (typically) .obj files that were linked into the exe
-    def __init__(self, idx, name, symbols, sources, linesInfo, contribs, globs):
+    def __init__(self, program, library, idx, name, symbols, sources, linesInfo, contribs, globs):
         self.idx = idx
         self.symbols_data = symbols
+        self.library = library
         self.locals = []
         self.globals = []
         try:
             self.sourceFile = [s for s in sources if ext(s) in ('cpp', 'c', 'asm') ].pop()
         except IndexError:
-            self.sourceFile = None
-        self.includes = [s for s in sources if ext(s) in ('h', 'hpp')]
+            if ext(name) in ("res", "dll"):
+                self.sourceFile = name
+            elif ext(name) in ("obj"):
+                self.sourceFile = name + ".c"
+            else:
+                raise Exception(f"don't know source name for {name}, {sources}")
+        self.includes = {p: Include.get(p) for p in sources if ext(p) in ('h', 'hpp')}
         self.name = name
         self.sectionContribs = contribs
 
         for contrib in self.sectionContribs:
             contrib.module = self
 
-        for inc in self.includes:
-            i = Include.get(inc)
-            i.modules.append(self)
+        for inc in self.includes.values():
+            inc.modules.append(self)
 
         if linesInfo:
             self.start = linesInfo.StartAddr
@@ -54,11 +59,12 @@ class Module:
                 pass
 
 class Library:
-    # multiple .ojb files might be pre-linked into a library
+    # multiple .obj files might be pre-linked into a library
     def __init__(self, name, path):
         self.name = path.split('\\')[-1]
         self.path = path
-        self.modules = []
+        self.commonPath = None
+        self.modules = {}
 
     def __str__(self):
         s = f"Library: {self.name} @ {self.path}"
@@ -71,7 +77,35 @@ class Library:
         return s
 
     def is_dll(self):
-        return len(self.modules) == 1 and ext(self.modules[0].name) == 'dll'
+        return all([ext(m.name) == 'dll' for m in self.modules.values()])
+
+    def addModule(self, m):
+        fullpath = m.sourceFile.lower()
+        filename = fullpath.split('\\')[-1]
+        path = fullpath[:-len(filename)]
+        if not self.commonPath:
+            # Start by assuming everything but the filename is common
+            self.commonPath = path
+        else:
+            if self.commonPath == path:
+                pass
+            elif self.commonPath == path[:len(self.commonPath)]:
+                filename = path[len(self.commonPath):] + filename
+            else:
+                # Find the common path
+                path_parts = path.split('\\')
+                common_parts = self.commonPath.split('\\')
+                for i, (a, b) in enumerate(zip(path_parts, common_parts)):
+                    if a != b:
+                        break
+                self.commonPath = '\\'.join(common_parts[:i]) + '\\'
+                extra = '\\'.join(common_parts[i:])
+                filename = fullpath[len(self.commonPath):]
+
+                # update all existing keys
+                self.modules = {extra + k: v for k, v in self.modules.items()}
+
+        self.modules[filename] = m
 
 class Section:
     def __init__(self, idx, section):
@@ -191,11 +225,10 @@ class Program:
                 symbols = mod_details.Symbols
                 lines = mod_details.Lines
 
-            m = Module(i, name, symbols, sources, lines, contribs, globs)
+            m = Module(self, library, i, name, symbols, sources, lines, contribs, globs)
 
             self.modules.append(m)
-            library.modules.append(m)
-            m.library = library
+            library.addModule(m)
 
 
 if __name__ == "__main__":
@@ -211,8 +244,9 @@ if __name__ == "__main__":
         if lib.is_dll() or lib.name in ["OLDNAMES.lib", "LIBCMTD.lib"]:
             continue
         #print(lib)
-        m = lib.modules[0]
-        #print(m.symbols_data)
+
+    game = p.libraries["game.lib"]
+    police = game.modules["s3police.cpp"]
 
         tree = toTree(list(m.symbols_data.Records))
         printTree(tree)
