@@ -24,6 +24,12 @@ class VarInt(ConstructClass):
             )
         )
 
+    def __eq__(self, other):
+        return self.value == other
+
+    def __str__(self):
+        return f"{self.value}"
+
 CVSwitch = {}
 
 # decorator to assign classes to switch map
@@ -135,7 +141,15 @@ class GlobalData(DataSym):
 class PublicData(DataSym):
     pass
 
-class ProcSym(ConstructClass):
+class TreeNode:
+    def __str__(self):
+        return "\n".join([ ConstructClass.__str__(self) ] + [textwrap.indent(str(child), "    ") for child in self.children() ])
+
+    def children(self):
+        return getattr(self, '_children', [])
+
+
+class ProcSym(TreeNode, ConstructClass):
     subcon = Struct(
         "pParent" / Int32ul,
         "pEnd" / Int32ul,
@@ -166,7 +180,7 @@ class GlobalProcedureStart(ProcSym):
     pass
 
 @CVRec(0x206) # S_THUNK32
-class Thunk(ConstructClass):
+class Thunk(TreeNode, ConstructClass):
     # These are functions imported by dlls
     subcon = Struct(
         "pParent" / Int32ul,
@@ -188,7 +202,7 @@ class Thunk(ConstructClass):
         return contrib.ModuleIndex
 
 @CVRec(0x207) # S_BLOCK32
-class BlockStart(ConstructClass):
+class BlockStart(TreeNode, ConstructClass):
     subcon = Struct(
         "pParent" / Int32ul,
         "pEnd" / Int32ul,

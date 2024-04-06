@@ -443,7 +443,7 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         obj = cls.subcon._parse(stream, context, path)
 
         # Don't instance Selects (and other raw subcons)
-        if not isinstance(obj, Container):
+        if not isinstance(obj, Container) and not issubclass(cls, ConstructValueClass):
             return obj
 
         # Skip calling the __init__ constructor, so that it can be used for building
@@ -587,7 +587,7 @@ class ConstructClass(ConstructClassBase, Container):
         str += "\n"
 
         keys = list(self)
-        keys.sort(key = lambda x: self._off.get(x, (-1, 0))[0])
+        keys.sort(key = lambda x: self._off.get(x, (-1, 0))[0] or -1)
 
         for key in keys:
             if key in self._off:
@@ -912,6 +912,14 @@ class ConstructValueClass(ConstructClassBase):
         if i == "value":
             return self.value
         raise Exception(f"Invalid index {i}")
+
+    def __getstate__(self):
+        ret = self.__dict__.copy()
+        try:
+            del ret["_stream"]
+        except:
+            pass
+        return ret
 
     @classmethod
     def _build(cls, obj, stream, context, path):

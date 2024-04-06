@@ -3,9 +3,73 @@ from construct import *
 from constructutils import *
 
 from codeview import VarInt
+from collections import defaultdict
+
+class TypeLeaf(ConstructClass):
+    def linkTIs(self, tpi, history=[]):
+        if any(x is self for x in history):
+            return
+        for k, lf in self.items():
+            if k.startswith("_"):
+                continue
+            if isinstance(lf, TypeIndex):
+                lf.link(tpi)
+            elif isinstance(lf, ListContainer) or isinstance(lf, list):
+                for item in lf:
+                    if isinstance(item, TypeLeaf):
+                        item.linkTIs(tpi, history + [self])
+
+    def addRef(self, ref):
+        try:
+            self._refs.append(ref)
+        except AttributeError:
+            self._refs = [ref]
+
+    def shortstr(self):
+        return self.__str__()
+
+    def fullstr(self):
+        return self.__str__()
 
 
-class StructProperty(ConstructClass):
+class TypeIndex(ConstructValueClass):
+    subcon = Int16ul
+
+    def link(self, tpi):
+        self.Type = tpi.types[self.value]
+        self.Type.addRef(self)
+
+    def __str__(self):
+        ty = getattr(self, "Type", None)
+        if ty:
+            return f"{ty}"
+        if self.value == 0:
+            return "Nil"
+        return f"TI(0x{self.value:04x})"
+
+    def parsed(self, ctx):
+        self.Type = None
+        self.ViaForwardsRef = None
+
+    def shortstr(self):
+        return self.Type.shortstr()
+
+    def fullstr(self):
+        return self.Type.fullstr()
+
+class Bitfield(ConstructClass):
+    def __str__(self):
+        attrs = []
+        for k, v in self.items():
+            if k.startswith("_"):
+                continue
+            if v is True:
+                attrs.append(k)
+            elif v is not False and int(v) != 0:
+                attrs.append(str(v))
+        return " ".join(attrs)
+
+class StructProperty(Bitfield):
     # bitfield describing class/struct/union/enum properties
     subcon = FixedSized(2,
         BitsSwapped(BitStruct(
@@ -27,7 +91,7 @@ class StructProperty(ConstructClass):
         )),
     )
 
-class FunctionAttributies(ConstructClass):
+class FunctionAttributies(Bitfield):
     subcon = FixedSized(1,
         BitStruct(
             "cxxreturnudt" / Flag, # C++ style return UDT
@@ -37,7 +101,7 @@ class FunctionAttributies(ConstructClass):
         )
     )
 
-class ModifierAttributes(ConstructClass):
+class ModifierAttributes(Bitfield):
     subcon = FixedSized(2,
         BitsSwapped(BitStruct(
             "const" / Flag, # const
@@ -47,7 +111,7 @@ class ModifierAttributes(ConstructClass):
         ))
     )
 
-class FieldAttributes(ConstructClass):
+class FieldAttributes(Bitfield):
     subcon = FixedSized(2,
         BitStruct(
             # Note: Construct's BitsInterger doesn't appear to work well with BitsSwapped.
@@ -56,24 +120,38 @@ class FieldAttributes(ConstructClass):
             "noinherit" / Flag, # class can't be inherited
             "pseudo" / Flag, # doesn't exist, compiler generated function
             "mprop" / Enum(BitsInteger(3),
-                MTvanilla = 0,
-                MTvirtual = 1,
-                MTstatic = 2,
-                MTfriend = 3,
-                MTintro = 4, # Implies MTvirtual. The "introduction" of this virtual function
-                MTpurevirt = 5,
-                Mtpureintro = 6, # likewise, implies MTpurevirt
+                vanilla = 0,
+                virtual = 1,
+                static = 2,
+                friend = 3,
+                intro = 4, # Implies MTvirtual. The "introduction" of this virtual function
+                purevirt = 5,
+                pureintro = 6, # likewise, implies MTpurevirt
             ),
             "access" / Enum(BitsInteger(2),
-                Private=2,
-                Protected=1,
-                Public=3
+                private=2,
+                protected=1,
+                public=3
             ),
             Padding(6),
             "sealed" / Flag, # method can't be overridden
             "compgenx" / Flag, # doesn't exist, compiler generated function
         )
     )
+
+CallingConvention = Enum(Int8ul,
+    NearC = 0x00,
+    FarC = 0x01,
+    NearPascal = 0x02,
+    FarPascal = 0x03,
+    NearFast = 0x04,
+    FarFast = 0x05,
+    NearStd = 0x07,
+    FarStd = 0x08,
+    NearSys = 0x09,
+    FarSys = 0x0a,
+    ThisCall = 0x0b,
+)
 
 TpSwitch = {}
 
@@ -86,65 +164,127 @@ def TpRec(type):
     return decorator
 
 @TpRec(0x0001) # LF_MODIFIER_16t
-class LfModifier(ConstructClass):
+class LfModifier(TypeLeaf):
     subcon = Struct(
         "Attributes" / ModifierAttributes,
-        "Type" / Int16ul, # Modified types
+        "Type" / TypeIndex, # Modified types
     )
 
 
 @TpRec(0x0002) # LF_POINTER_16t
-class LfPointer(ConstructClass):
+class LfPointer(TypeLeaf):
     subcon = Struct(
         "Attributes" / FixedSized(2,
-            BitsSwapped(BitStruct(
-                "ptrtype" / BitsInteger(5),
-                "ptrmode" / BitsInteger(3),
-                "isflat32" / Flag,
-                "isvolatile" / Flag,
-                "isconst" / Flag,
-                "isunaligned" / Flag,
+            BitStruct(
+                "ptrmode" / Enum(BitsInteger(3),
+                    Ptr=0,
+                    Ref=1,
+                    PMem=2,
+                    PMFunc=3,
+                    Reserved=4,
+                ),
+                "ptrtype" / Enum(BitsInteger(5),
+                    PtrNear = 0,
+                    PtrFar = 1,
+                    PtrHuge = 2,
+                    PtrBaseSeg = 3,
+                    PtrBaseVal = 4,
+                    PtrBaseSegVal = 5,
+                    PtrBaseAddr = 6,
+                    PtrBaseSegAddr = 7,
+                    PtrBaseType = 8,
+                    PtrBaseSelf = 9,
+                    PtrNear32 = 10,
+                    PtrFar32 = 11,
+                    Ptr64 = 12,
+                    PtrUnused = 13,
+                ),
                 Padding(4),
+                "isunaligned" / Flag,
+                "isconst" / Flag,
+                "isvolatile" / Flag,
+                "isflat32" / Flag,
             )
-        )),
-        "Type" / Int16ul,
+        ),
+        "Type" / TypeIndex,
     )
 
+    def __str__(self):
+        s = f"{self.Attributes.ptrmode} to: {self.Type.shortstr()}"
+        if self.Attributes.ptrtype != "PtrNear32":
+            s = f"{self.Attributes.ptrtype} {s}"
+        if self.Attributes.isunaligned:
+            s = f"unaligned {s}"
+        if self.Attributes.isconst:
+            s = f"const {s}"
+        if self.Attributes.isvolatile:
+            s = f"volatile {s}"
+        if self.Attributes.isflat32:
+            s = f"flat32 {s}"
+        return s
+
 @TpRec(0x0003) # LF_ARRAY_16t
-class LfArray(ConstructClass):
+class LfArray(TypeLeaf):
     subcon = Struct(
-        "Count" / Int16ul,
-        "Type" / Int16ul,
+        "Type" / TypeIndex,
+        "Count" / Dec(Int16ul),
         "Size" / VarInt,
         Const(0, Int8ul), # technically this is a zero-length string for the name
                           # but I don't think arrays can be named
         #"Name" / PascalString(Int8ul, "ascii"),
     )
 
-ClassOrStruct = Struct(
-        "count" / Int16ul, # Number of elements in class
-        "fieldList" / Int16ul, # Type Index of Field descriptor list
+class FrowardRef(TypeLeaf):
+    def linkTIs(self, tpi):
+        TypeLeaf.linkTIs(self, tpi)
+        if self.properties.fwdref:
+            for ty in tpi.byName[self.Name]:
+                if ty.__class__ == self.__class__ and not ty.properties.fwdref:
+                    self._definition = ty
+                    ty.addRef(self)
+                    return
+            if getattr(self, "Size", None) == 0:
+                # Almost certainly an empty struct
+                self._definition = None
+            else:
+                print (f"Failed to resolve forwards ref: {self.Name}")
+        else:
+            self._definition = None
+
+    def __str__(self):
+        try:
+           if self._definition:
+               return f"(Forwards ref to)\n {self.definition}"
+        except AttributeError:
+            pass
+        return TypeLeaf.__str__(self)
+
+    def shortstr(self):
+        prefix = self.__class__.__name__[2:].lower()
+        return f"{prefix} {self.Name}"
+
+
+@TpRec(0x0004) # LF_CLASS_16t
+class LfClass(FrowardRef):
+    subcon = Struct(
+        "count" / Dec(Int16ul), # Number of elements in class
+        "fieldList" / TypeIndex, # Type Index of Field descriptor list
         "properties" / StructProperty,
-        "derivedList" / Int16ul, # Type Index of derived class list
-        "vshape" / Int16ul, # Type Index of vshape table
+        "derivedList" / TypeIndex, # Type Index of derived class list
+        "vshape" / TypeIndex, # Type Index of vshape table
         "Size" / VarInt,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
-@TpRec(0x0004) # LF_CLASS_16t
-class LfClass(ConstructClass):
-    subcon = ClassOrStruct
-
 @TpRec(0x0005) # LF_STRUCTURE_16t
-class LfStructure(ConstructClass):
-    subcon = ClassOrStruct
-
+class LfStruct(LfClass):
+    pass
 
 @TpRec(0x0006) # LF_UNION_16t
-class LfUnion(ConstructClass):
+class LfUnion(FrowardRef):
     subcon = Struct(
-        "count" / Int16ul, # Number of elements in class
-        "fieldList" / Int16ul, # Type Index of Field descriptor list
+        "count" / Dec(Int16ul), # Number of elements in class
+        "fieldList" / TypeIndex, # Type Index of Field descriptor list
         "properties" / StructProperty,
         "Size" / VarInt,
         "Name" / PascalString(Int8ul, "ascii"),
@@ -152,40 +292,63 @@ class LfUnion(ConstructClass):
 
 
 @TpRec(0x0007) # LF_ENUM_16t
-class LfEnum(ConstructClass):
+class LfEnum(FrowardRef):
     subcon = Struct(
-        "count" / Int16ul, # Number of elements in enum
-        "utype" / Int16ul, # Underlying type
-        "fieldList" / Int16ul, # Type Index of Field descriptor list
+        "count" / Dec(Int16ul), # Number of elements in enum
+        "utype" / TypeIndex, # Underlying type
+        "fieldList" / TypeIndex, # Type Index of Field descriptor list
         "properties" / StructProperty,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
 @TpRec(0x0008) # LF_PROCEDURE_16t
-class LfProcedure(ConstructClass):
+class LfProcedure(TypeLeaf):
     subcon = Struct(
-        "rvtype" / Int16ul, # type index of return value
-        "calltype" / Int8ul, # calling convention (call_t)
+        "rvtype" / TypeIndex, # type index of return value
+        "calltype" / CallingConvention, # calling convention (call_t)
         "funcattr" / FunctionAttributies, # attributes
         "parmcount" / Int16ul, # number of parameters
-        "arglist" / Int16ul, # type index of argument list
+        "arglist" / TypeIndex, # type index of argument list
     )
 
+    def linkTIs(self, tpi):
+        self.rvtype.link(tpi)
+        if self.parmcount:
+            self.args = tpi.types[self.arglist.value].args
+            assert self.parmcount == len(self.args)
+            for arg in self.args:
+                arg.link(tpi)
+        del self.arglist
+        del self.parmcount
+
+
 @TpRec(0x0009) # LF_MFUNCTION_16t
-class LfMemberFunction(ConstructClass):
+class LfMemberFunction(TypeLeaf):
     subcon = Struct( # struct lfMFunc_16t
-        "rvtype" / Int16ul, # type index of return value
-        "classtype" / Int16ul, # type index of containing class
-        "thistype" / Int16ul, # type index of this pointer (model specific)
-        "calltype" / Int8ul, # calling convention (call_t)
+        "rvtype" / TypeIndex, # type index of return value
+        "classtype" / TypeIndex, # type index of containing class
+        "_thistype" / TypeIndex, # type index of this pointer (model specific)
+        "calltype" / CallingConvention, # calling convention (call_t)
         "funcattr" / FunctionAttributies, # attributes
         "parmcount" / Int16ul, # number of parameters
-        "arglist" / Int16ul, # type index of argument list
+        "arglist" / TypeIndex, # type index of argument list
         "thisadjust" / Int32sl, # this adjuster (long because pad required anyway)
     )
 
+    def linkTIs(self, tpi):
+        self.rvtype.link(tpi)
+        self.classtype.link(tpi)
+        self._thistype.link(tpi)
+        if self.parmcount:
+            self.args = tpi.types[self.arglist.value].args
+            assert self.parmcount == len(self.args)
+            for arg in self.args:
+                arg.link(tpi)
+        del self.arglist
+        del self.parmcount
+
 @TpRec(0x000a) # LF_VTSHAPE
-class LfVtShape(ConstructClass):
+class LfVtShape(TypeLeaf):
     # Virtual Shape table
     subcon = Struct(
         "count" / Int16ul, # Number of elements in class
@@ -204,24 +367,23 @@ class LfVtShape(ConstructClass):
                 )
             )
         )),
-        #"desc" / HexDump(GreedyBytes),
     )
 
 @TpRec(0x0012) # LF_VFTPATH_16t
-class LfVftPath(ConstructClass):
+class LfVftPath(TypeLeaf):
     subcon = Struct(
         "count" / Int16ul, # number of bases in path
-        "bases" / Array(this.count, Int16ul),
+        "bases" / Array(this.count, TypeIndex),
     )
 
 @TpRec(0x0201) # LF_ARGLIST_16t
-class LfArgList(ConstructClass):
+class LfArgList(TypeLeaf):
     subcon = Struct(
         "count" / Int16ul, # Number of elements in class
-        "args" / Array(this.count, Int16ul),
+        "args" / Array(this.count, TypeIndex),
     )
 
-class FieldListEntry(ConstructClass):
+class FieldListEntry(TypeLeaf):
     subcon = Aligned(4, Struct(
         "Type" / Int16ul,
         "Data" / Switch(this.Type, TpSwitch,
@@ -231,30 +393,33 @@ class FieldListEntry(ConstructClass):
     )
 
 @TpRec(0x0204) # LF_FIELDLIST_16t
-class LfFieldList(ConstructClass):
+class LfFieldList(TypeLeaf):
     subcon = Struct(
         "Data" / GreedyRange(FieldListEntry),
     )
 
+    def parsed(self, ctx):
+        self.Data = ListContainer([x.Data for x in self.Data])
+
 @TpRec(0x0206) # LF_BITFIELD_16t
-class LfBitfield(ConstructClass):
+class LfBitfield(TypeLeaf):
     subcon = Struct(
         "length" / Int8ul,
         "position" / Int8ul,
-        "type" / Int16ul,
+        "type" / TypeIndex,
     )
 
-class MethodListEntry(ConstructClass):
+class MethodListEntry(TypeLeaf):
     subcon = Struct(
         "attr" / FieldAttributes,
-        "index" / Int16ul,
-        "vbaseoffset" / If(lambda ctx: ctx.attr.mprop in ("MTintro", "MTpureintro"),
+        "index" / TypeIndex,
+        "vbaseoffset" / If(lambda ctx: ctx.attr.mprop in ("intro", "pureintro"),
             Int32ul # offset into virtual function table
         )
     )
 
 @TpRec(0x0207)
-class LfMethodList(ConstructClass):
+class LfMethodList(TypeLeaf):
     subcon = Struct(
         "Data" / GreedyRange(MethodListEntry)
     )
@@ -262,35 +427,35 @@ class LfMethodList(ConstructClass):
 # Records starting with 0x0400 are only used referenced from field lists
 
 @TpRec(0x0400) # LF_BCLASS_16t
-class LfBaseClass(ConstructClass):
+class LfBaseClass(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul, # type index of base class
+        "index" / TypeIndex, # type index of base class
         "attr" / FieldAttributes,
         "offset" / VarInt, # offset of base within class
     )
 
 @TpRec(0x0401) # LF_VBCLASS_16t
-class LfVirtualBaseClass(ConstructClass):
+class LfVirtualBaseClass(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul, # type index of direct virtual base class
-        "vbptr" / Int16ul, # type index of virtual base pointer
+        "index" / TypeIndex, # type index of direct virtual base class
+        "vbptr" / TypeIndex, # type index of virtual base pointer
         "attr" / FieldAttributes,
         "ptroffset" / VarInt, # virtual base pointer offset from address point
         "vtableoffset" / VarInt, # virtual base offset from vbtable
     )
 
 @TpRec(0x0402) # LF_IVBCLASS_16t
-class LfIndirectVirtualBaseClass(ConstructClass):
+class LfIndirectVirtualBaseClass(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul, # type index of direct virtual base class
-        "vbptr" / Int16ul, # type index of virtual base pointer
+        "index" / TypeIndex, # type index of direct virtual base class
+        "vbptr" / TypeIndex, # type index of virtual base pointer
         "attr" / FieldAttributes,
         "ptroffset" / VarInt, # virtual base pointer offset from address point
         "vtableoffset" / VarInt, # virtual base offset from vbtable
     )
 
 @TpRec(0x0403) # LF_ENUMERATE_ST
-class LfEnumerate(ConstructClass):
+class LfEnumerate(TypeLeaf):
     subcon = Struct(
         "attr" / FieldAttributes,
         "value" / VarInt, # offset of base within class
@@ -298,49 +463,49 @@ class LfEnumerate(ConstructClass):
     )
 
 @TpRec(0x0406) # LF_MEMBER_16t
-class LfMember(ConstructClass):
+class LfMember(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul,
+        "index" / TypeIndex,
         "attr" / FieldAttributes,
         "offset" / VarInt, # offset of field within class
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
 @TpRec(0x0407) # LF_STMEMBER_16t
-class LfStaticMember(ConstructClass):
+class LfStaticMember(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul,
+        "index" / TypeIndex,
         "attr" / FieldAttributes,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
 @TpRec(0x0408) # LF_METHOD_16t
-class LfMethod(ConstructClass):
+class LfMethod(TypeLeaf):
     subcon = Struct(
         "count" / Int16ul,
-        "methodList" / Int16ul,
+        "methodList" / TypeIndex,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
 @TpRec(0x0409) # LF_NESTTYPE_16t
-class LfNestedType(ConstructClass):
+class LfNestedType(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul,
+        "index" / TypeIndex,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
 @TpRec(0x040a) # LF_VFUNCTAB_16t
-class LfVFuncTab(ConstructClass):
+class LfVFuncTab(TypeLeaf):
     subcon = Struct(
-        "index" / Int16ul,
+        "index" / TypeIndex,
     )
 
 @TpRec(0x040c) # LF_ONEMETHOD_16t
-class LfOneMethod(ConstructClass):
+class LfOneMethod(TypeLeaf):
     subcon = Struct(
         "attr" / FieldAttributes,
-        "index" / Int16ul,
-        "vbaseoffset" / If(lambda ctx: ctx.attr.mprop in ("MTintro", "MTpureintro"),
+        "index" / TypeIndex,
+        "vbaseoffset" / If(lambda ctx: ctx.attr.mprop in ("intro", "pureintro"),
             Int32ul # offset into virtual function table
         ),
         "Name" / PascalString(Int8ul, "ascii"),
@@ -387,26 +552,34 @@ class TypeInfomation(ConstructClass):
     )
 
     def parsed(self, ctx):
-        #print(f"Loaded {len(self.Records)} type records", file=sys.stderr)
+        import base_types
+        self.types = list(base_types.types)
 
-
-        # TODO: Fill in all the built-in types
-        self.types = [None] * self.MinimumTI
         self.byRecOffset = {}
+        byName = defaultdict(list)
+
+        idx = self.MinimumTI
+        assert len(self.types) == self.MinimumTI
 
         for rec in self.Records:
-            #print(f"{rec._addr:04x} {rec}")
-            rec.isGlobal = False
-            rec.isPublic = False
-            self.types += [rec]
-            self.byRecOffset[rec._addr] = rec
+            addr = rec._addr
+            rec = rec.Data
+            rec._idx = idx
+            idx += 1
+            self.types.append(rec)
+            self.byRecOffset[addr] = rec
 
-        #for k, v in self.byRecOffset.items():
-            #print(f"{k:x} {v}")
+            if hasattr(rec, "Name"):
+                byName[rec.Name].append(rec)
+
+        self.byName = dict(byName)
+
+        for ty in self.types:
+            if isinstance(ty, TypeLeaf):
+                ty.linkTIs(self)
 
     def fromOffset(self, offset):
         try:
             return self.byRecOffset[offset]
         except KeyError:
             return None
-

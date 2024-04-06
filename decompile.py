@@ -26,6 +26,8 @@ construct.Container.__getstate__ = better_getstate
 if __name__ == "__main__":
     import sys
 
+    sys.setrecursionlimit(5000)
+
     pdb_file = "../debug_build_beta/COPTER_D.PDB"
     exe_file = "../debug_build_beta/COPTER_D.EXE"
 
