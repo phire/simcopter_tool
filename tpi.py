@@ -540,18 +540,16 @@ class TypeInfomation(ConstructClass):
         "Version" / Const(19951122, Int32ul), # version number for impv41
         "MinimumTI" / Int16ul, # lowest TI
         "MaximumTI" / Int16ul, # highest TI + 1
-        "ByteCount" / Int32ul, # Num bytes in following stream
+        "ByteCount" / Int32ul, # Total size of Records
 
-        # TODO: Should we parse this hash value stream?
-        #       Appears to be 16bits per record, and is probally the same hash used for the GSI mapping
-        #       Probally used to accelerate reverse lookups?
-        #       I'm not sure we will find any interesting information there.
+        # see parseHashes, doesn't seem to have useful infomation
         "HashValueStream" / Int16ul,
         Padding(2),
         "Records" / Array(this.MaximumTI - this.MinimumTI, TypeRecord)
     )
 
     def parsed(self, ctx):
+        #assert sizeof(self.Records) == self.ByteCount
         import base_types
         self.types = list(base_types.types)
 
@@ -583,3 +581,32 @@ class TypeInfomation(ConstructClass):
             return self.byRecOffset[offset]
         except KeyError:
             return None
+
+    def parseHashes(self, msf):
+        if self.HashValueStream == 0:
+            return
+
+        numTypes = self.MaximumTI - self.MinimumTI
+
+        stream = msf.getStream(self.HashValueStream)
+
+        # There is one bucket idx (in the range 0 to 4095) per TI
+        # presumably the same hash function as used in GSI
+        buckets = list(Array(numTypes, Int16ul).parse_stream(stream))
+
+        # This some kind of skip list that allows implementations to quickly find the TI they are looking for
+        # It links to the first whole record after each 8KB boundary
+        Skip = Struct(
+            "TI" / Int16ul,
+            "unk" / Int16ul, # might be flags?? Usually in the ranges 0x80-8f or 0xe0-0xef
+            "off" / Int32ul
+        )
+        skiplist = list(GreedyRange(Skip).parse_stream(stream))
+
+        print("\n")
+
+        for o in skiplist:
+            print(f"{o.TI:04x} {o.unk:04x} {o.off:08x}")
+            print(self.types[o.TI])
+
+
