@@ -129,8 +129,8 @@ class FieldAttributes(Bitfield):
                 pureintro = 6, # likewise, implies MTpurevirt
             ),
             "access" / Enum(BitsInteger(2),
-                private=2,
-                protected=1,
+                private=1,
+                protected=2,
                 public=3
             ),
             Padding(6),
