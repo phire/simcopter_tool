@@ -104,7 +104,14 @@ if __name__ == "__main__":
     #                 continue
 
 
-    # for inc in includes.values():q
+    # for inc in includes.values():
     #     print(inc.filename)
     #     for m in inc.modules:
     #         print(f"    {m.sourceFile or m.name }")
+
+    # for (kl, l) in p.libraries.items():
+    #     if kl == "":
+    #         kl = "<root>"
+    #     for (k, m) in l.modules.items():
+    #         for f in m.functions:
+    #             print(f"{kl} {k}, {f}")

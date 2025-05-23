@@ -263,22 +263,22 @@ if __name__ == "__main__":
     # Put global/public symbols with known addresses in a map
     for sym in symbols.symbols:
         #print(f"{sym}")
-        if isinstance(sym.Data, (PublicData, GlobalData, LocalData)):
-            SymByAddress[(sym.Data.Segment, sym.Data.Offset)] = sym
-        elif isinstance(sym.Data, ProcRef):
-            module = sym.Data.ModuleId
-            offset = sym.Data.SymbolOffset
-        elif isinstance(sym.Data, LocalProcRef):
+        if isinstance(sym, (PublicData, GlobalData, LocalData)):
+            SymByAddress[(sym.Segment, sym.Offset)] = sym
+        elif isinstance(sym, ProcRef):
+            module = sym.ModuleId
+            offset = sym.SymbolOffset
+        elif isinstance(sym, LocalProcRef):
             # I suspect these are functions from a module that have been re-exported into global visibility?
             pass
-        elif isinstance(sym.Data, Constant):
+        elif isinstance(sym, Constant):
             # these appear to be enum values
             pass
-        elif isinstance(sym.Data, UserDefinedType):
+        elif isinstance(sym, UserDefinedType):
             # I think these are typedefs?
             pass
         else:
-           print(f"{sym}, {sym.Data.__class__}")
+           print(f"{sym}, {sym.__class__}")
 
     for sc in dbi.SectionContribution:
         module = dbi.ModuleInfo[sc.ModuleIndex]
@@ -294,8 +294,8 @@ if __name__ == "__main__":
         sym = None
         try:
             sym = SymByAddress[(sc.Section, sc.Offset)]
-            name = sym.Data.Name
-            ty = sym.Data.Type
+            name = sym.Name
+            ty = sym.Type
         except KeyError:
             pass
 

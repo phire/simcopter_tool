@@ -644,7 +644,10 @@ class ConstructClass(ConstructClassBase, Container):
                     sizeofs = f"{sizeof:3x}"
                 else:
                     sizeofs = "  *"
-                off = f"\x1b[32m[{offv:3x}.{sizeofs}]\x1b[m "
+                if offv is None:
+                    off = f"\x1b[32m[err.{sizeofs}]\x1b[m "
+                else:
+                    off = f"\x1b[32m[{offv:3x}.{sizeofs}]\x1b[m "
             if key in self._meta:
                 meta = f" \x1b[34m{self._meta[key]}\x1b[m"
             if '\n' in val_repr:
