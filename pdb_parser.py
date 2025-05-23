@@ -194,6 +194,12 @@ class DebugInfomation(ConstructClass):
         assert size + DebugInfomationHeader.sizeof() == self._stream.size
 
 
+class programData:
+    def __init__(self, fil):
+        pass
+
+
+
 if __name__ == "__main__":
     import sys
     filename = sys.argv[1]
