@@ -16,6 +16,7 @@ def process_methods(c, methods, p):
             breakpoint()
             continue
         mbr = MemberFunction(method, p)
+        mbr.name = c.name
         c.fields += [mbr]
 
 
@@ -120,8 +121,6 @@ class BaseRef:
             c += "<indirect> " # todo, what does this mean?
         return c + self.name
 
-
-
 class Field:
     def __init__(self, field, p):
         try:
@@ -158,7 +157,6 @@ class Member(Field):
 class StaticMember(Field):
     def __init__(self, field, p):
         super().__init__(field, p)
-
 
     def as_code(self):
         c = self.attr_as_code()
@@ -204,7 +202,7 @@ class Method(Field):
 
 
 class MemberFunction(Method):
-    # I think member functions are virtual, and Direct methods are not
+    # I think member functions are constructors???
     def __init__(self, method, p):
         super().__init__(method, p)
 
