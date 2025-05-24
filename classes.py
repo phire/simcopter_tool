@@ -6,16 +6,16 @@ import textwrap
 def process_methods(c, methods, p):
 
     # todo: these methodlists are (sometimes?) shared by multiple classes
-    for i, method in enumerate(methods.methodList.Type.Data):
+    for method in methods.methodList.Type.Data:
         if method.index.value == 0:
-            # I think this just reserves a slot in the vtable?
+            # TODO: is this the new constructor?
             #print("NoType method found in ", c.name)
             continue
         if not isinstance(method.index.Type, tpi.LfMemberFunction):
             print("Unknown method type", method.index.Type.__class__)
             breakpoint()
             continue
-        mbr = MemberFunction(i, method, p)
+        mbr = MemberFunction(method, p)
         c.fields += [mbr]
 
 
@@ -180,7 +180,8 @@ class Method(Field):
         assert isinstance(func, tpi.LfMemberFunction)
 
         self.func = func
-        self.vtable = None
+        self.vtable = field.vbaseoffset
+        # TODO: collect vtable offsets from base classes
 
     def as_code(self):
         c = self.attr_as_code()
@@ -191,10 +192,8 @@ class Method(Field):
         if self.func.calltype != tpi.CallingConvention.ThisCall:
             c += f"// calltype: {self.func.calltype}\n"
 
-        if self.vtable is not None:
-            c += "// virtual\n"
-
-
+        if str(self.func.funcattr):
+            c += f"// funcattr: {self.func.funcattr}\n"
 
         args = args_as_code(self.func.args)
         if self.attr.mprop != "vanilla":
@@ -206,13 +205,8 @@ class Method(Field):
 
 class MemberFunction(Method):
     # I think member functions are virtual, and Direct methods are not
-    def __init__(self, i, method, p):
+    def __init__(self, method, p):
         super().__init__(method, p)
-        # todo: use vtable to get name, somehow
-
-        self.vtable = i * 4
-        if method.vbaseoffset is not None:
-            self.vtable += method.vbaseoffset
 
 class Nested(Field):
     def __init__(self, field, p):
