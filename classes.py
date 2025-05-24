@@ -151,8 +151,8 @@ class Member(Field):
         super().__init__(field, p)
 
     def as_code(self):
-        c = f" // attr: {self.attr}\n"
-        c += f"{self.ty.Name} {self.name};\n"
+        c = self.attr_as_code()
+        c += f"{self.ty.shortstr()} {self.name};\n"
         return c
 
 class StaticMember(Field):
@@ -162,7 +162,7 @@ class StaticMember(Field):
 
     def as_code(self):
         c = self.attr_as_code()
-        c += f"static {self.ty.Name} {self.name};\n"
+        c += f"static {self.ty.shortstr()} {self.name};\n"
         return c
 
 def args_as_code(f):
@@ -268,6 +268,7 @@ def parse_classes(p):
         #     print("Found CopterSparkalPalette TI: ", TI)
         #     print(info.as_code())
         #     print(impl)
+        #     breakpoint()
 
     return classes
 

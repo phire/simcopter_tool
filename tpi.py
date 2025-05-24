@@ -256,6 +256,9 @@ class LfArray(TypeLeaf):
         #"Name" / PascalString(Int8ul, "ascii"),
     )
 
+    def shortstr(self):
+        return f"{self.Type.shortstr()}[{self.Count}]"
+
 class FrowardRef(TypeLeaf):
     def linkTIs(self, tpi):
         TypeLeaf.linkTIs(self, tpi)
