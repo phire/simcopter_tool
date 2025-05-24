@@ -71,6 +71,10 @@ if __name__ == "__main__":
     scanfn = police.functions["PoliceCarClass::ScanForBadGuys"]
     #scanfn.disassemble()
 
+    from classes import Class, parse_classes
+
+    p.classes = parse_classes(p)
+
 
     # for sym in p.unknownContribs:
     #     print(sym)
@@ -109,9 +113,23 @@ if __name__ == "__main__":
     #     for m in inc.modules:
     #         print(f"    {m.sourceFile or m.name }")
 
+    #for t in p.types.types:
+    #    print(t)
+
+    # cdebugwin = p.types.byName["CDebugWindow"][1]
+    # print(cdebugwin)
+
+    x = p.libraries["x.lib"]
+    b = p.libraries[""]
+
     # for (kl, l) in p.libraries.items():
     #     if kl == "":
     #         kl = "<root>"
     #     for (k, m) in l.modules.items():
     #         for f in m.functions:
     #             print(f"{kl} {k}, {f}")
+
+    # dbg = b.modules["sparkal\debug.cpp"]
+    # outputString = dbg.functions["CDebugWindow::OutputString"]
+    # outputString.disassemble()
+

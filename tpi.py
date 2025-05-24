@@ -28,6 +28,9 @@ class TypeLeaf(ConstructClass):
     def shortstr(self):
         return self.__str__()
 
+    def typestr(self):
+        return self.shortstr()
+
     def fullstr(self):
         return self.__str__()
 
@@ -53,6 +56,9 @@ class TypeIndex(ConstructValueClass):
 
     def shortstr(self):
         return self.Type.shortstr()
+
+    def typestr(self):
+        return self.Type.typestr()
 
     def fullstr(self):
         return self.Type.fullstr()
@@ -170,6 +176,16 @@ class LfModifier(TypeLeaf):
         "Type" / TypeIndex, # Modified types
     )
 
+    def __str__(self):
+        s = f"{self.Type.shortstr()}"
+        if self.Attributes.unaligned:
+            s = f"unaligned {s}"
+        if self.Attributes.const:
+            s = f"const {s}"
+        if self.Attributes.volatile:
+            s = f"volatile {s}"
+        return s
+
 
 @TpRec(0x0002) # LF_POINTER_16t
 class LfPointer(TypeLeaf):
@@ -210,7 +226,13 @@ class LfPointer(TypeLeaf):
     )
 
     def __str__(self):
-        s = f"{self.Attributes.ptrmode} to: {self.Type.shortstr()}"
+        match self.Attributes.ptrmode:
+            case "Ptr":
+                s = f"{self.Type.shortstr()}*"
+            case "Ref":
+                s = f"{self.Type.shortstr()}&"
+            case _:
+                s = f"{self.Attributes.ptrmode} to: {self.Type.shortstr()}"
         if self.Attributes.ptrtype != "PtrNear32":
             s = f"{self.Attributes.ptrtype} {s}"
         if self.Attributes.isunaligned:
@@ -344,8 +366,17 @@ class LfMemberFunction(TypeLeaf):
             assert self.parmcount == len(self.args)
             for arg in self.args:
                 arg.link(tpi)
+        else:
+            self.args = []
         del self.arglist
         del self.parmcount
+
+    def string(self, name):
+        s = f"{self.rvtype} {self.classtype.Type.Name}::{name}("
+        for arg in self.args:
+            s += f"{arg}, "
+        s += ")"
+        return s
 
 @TpRec(0x000a) # LF_VTSHAPE
 class LfVtShape(TypeLeaf):
@@ -563,6 +594,7 @@ class TypeInfomation(ConstructClass):
             addr = rec._addr
             rec = rec.Data
             rec._idx = idx
+            rec.TI = idx
             idx += 1
             self.types.append(rec)
             self.byRecOffset[addr] = rec
