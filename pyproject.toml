@@ -1,0 +1,11 @@
+[project]
+name = "simcopter_tool"
+version = "0.1.0"
+description = "Tool for semi-automated decompilation of vc++ 4.1 PDB files (especially simcopter)"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "construct>=2.10.70",
+    "iced-x86>=1.21.0",
+    "intervaltree>=3.1.0",
+]
