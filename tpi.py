@@ -359,6 +359,8 @@ class LfProcedure(TypeLeaf):
             assert self.parmcount == len(self.args)
             for arg in self.args:
                 arg.link(tpi)
+        else:
+            self.args = []
         del self.arglist
         del self.parmcount
 

@@ -73,8 +73,6 @@ def dump(p: Program, dest: str):
         else:
             before.unknowns += [(sym, after.sourceFile)]
 
-            print(f"Hard: {before.name} {sym.Name} {after.name}")
-
 
     if not os.path.exists(dest):
         os.mkdir(dest)
@@ -235,11 +233,7 @@ def func_sig(p, func):
         if func.sym is not None:
             return pydemangler.demangle(func.sym.Name)
         return f"UNKNOWN_SIG void {func.name}(/* no symbols */)"
-
-    if isinstance(ty, tpi.LfProcedure):
-        args = []
-    else:
-        args = [arg.typestr() for arg in ty.args]
+    args = [arg.typestr() for arg in ty.args]
 
     return f"{ty.rvtype.Type.typestr()} {func.name}({', '.join(args)})"
 
