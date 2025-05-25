@@ -26,3 +26,11 @@ libs = {
 unknowns = {
 
 }
+
+source_override = {
+    # We don't have a source filename for these, probably because they have no functions
+    # Or all the functions were inlined and/or garbage collected.
+    "fixed.obj": "fixed.asm",
+    "io.obj": "io.c",
+    "s2global.obj": "s2global.c",
+}

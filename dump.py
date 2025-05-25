@@ -104,19 +104,22 @@ def fix_path(path, lib_prefix):
 
 def dump_lib(p, lib):
     prefix = simcopter.libs[lib.name]
-    print(f"Dumping {lib.name} to {prefix}")
-
-    count = 10
 
     for module in lib.modules.values():
+        try:
+            # If we have an override, use that.
+            new_source = simcopter.source_override[module.name.lower()]
+        except KeyError:
+            pass
+        else:
+            module.sourceFile = new_source
+            print(f"Using override for {module.name}: {module.sourceFile}")
+
         module_path = fix_path(module.sourceFile, prefix)
-        if module.sourceFile.lower().endswith((".asm", ".obj")):
+        if module_path.lower().endswith((".asm")):
             print(f"Skipping assembly module {module.name} at {module.sourceFile}")
             continue
         dump_module(p, module, module_path)
-        count -= 1
-        # if count <= 0:
-        #     break
 
 
 def dump_module(p, module, path):
