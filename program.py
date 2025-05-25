@@ -31,6 +31,8 @@ class Module:
         self.locals = []
         self.globals = globs
         self.functions = {}
+        self.unknowns = []
+
         try:
             self.sourceFile = [s for s in sources if ext(s) in ('cpp', 'c', 'asm') ].pop()
         except IndexError:
@@ -174,6 +176,8 @@ class Section:
             self.name = section.Name
             self.va = 0x400000 + section.VirtualAddress
             self.data = section.Data
+        else:
+            self.va = None
         self.contribs = IntervalTree()
 
 class UnknownContribs:
@@ -219,7 +223,7 @@ class Program:
 
             # add to interval trees for quick lookup
             section = self.sections[sc.Section]
-            section.contribs[sc.Offset : sc.Offset + sc.Size + 1] = sc
+            section.contribs[sc.Offset : sc.Offset + sc.Size] = sc
             sc._data = section.data[sc.Offset : sc.Offset + sc.Size]
 
         self.unknownContribs = UnknownContribs()

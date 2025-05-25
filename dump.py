@@ -18,6 +18,63 @@ extrafiles = defaultdict(list)
 def dump(p: Program, dest: str):
     extrafiles = []
 
+    # So... some of the contribs seem to be missing. They all seem to be uninitilized data.
+    # We would rather have them in the dump, so lets scan nearby symbols to try and gues what module
+    # they belong to.
+    for sym in p.unknownContribs:
+
+        if override := simcopter.unknowns.get(sym.Name):
+            # If we have an override, use that.
+            p.modules[override].unknowns += [(sym, None)]
+            continue
+
+        after = None
+        before = None
+        for idx in range(sym.index - 1, 0, -1):
+            try:
+                contrib = p.globals[idx].contrib
+                if contrib.module:
+                    #print(f"After {contrib.module.sourceFile}")
+                    after = contrib.module
+                    break
+            except:
+                try:
+                    moduleId = p.globals[idx].getModuleId(p)
+                    if moduleId:
+                        #print(f"After {p.modules[moduleId].sourceFile}")
+                        after = p.modules[moduleId]
+                        break
+                except AttributeError:
+                    continue
+        for idx in range(sym.index, len(p.globals)):
+            try:
+                contrib = p.globals[idx].contrib
+                if contrib.module:
+                    #print(f"Before {contrib.module.sourceFile}\n")
+                    before = contrib.module
+                    break
+            except:
+                try:
+                    moduleId = p.globals[idx].getModuleId(p)
+                    if moduleId:
+                        #print(f"Before {p.modules[moduleId].sourceFile}\n")
+
+                        before = p.modules[moduleId]
+                        break
+                except AttributeError:
+                    continue
+        if before == after:
+            # The trivial case. We found symbols for the same module before and after.
+            # it probally belongs to that module.
+            before.unknowns += [(sym, None)]
+        elif "S2global.obj" == after.name:
+            # bias towards S2global.obj, which is the global data module.
+            after.unknowns += [(sym, before.sourceFile)]
+        else:
+            before.unknowns += [(sym, after.sourceFile)]
+
+            print(f"Hard: {before.name} {sym.Name} {after.name}")
+
 
     if not os.path.exists(dest):
         os.mkdir(dest)
@@ -70,8 +127,6 @@ def dump_module(p, module, path):
             for _, thing in sorted(contrib.things.items()):
                 if isinstance(thing, Function):
                     func = thing
-
-
                     if func.name.endswith(" destructor'") or func.name.endswith(" iterator'"):
                         f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
                         f.write(f"// {func.name}\n\n")
@@ -111,16 +166,39 @@ def dump_module(p, module, path):
                 else:
                     sym = thing
                     if contrib.is_code():
-                        f.write(f"// FUNCTION: {p.exename} 0x{sym.Offset:08x}\n")
-                        breakpoint()
-                    elif isinstance(sym, (codeview.GlobalData, codeview.PublicData)):
-                        f.write(f"// GLOBAL: {p.exename} 0x{sym.Offset:08x}\n")
-                    elif isinstance(sym, codeview.LocalData):
-                        f.write(f"// LOCAL: {p.exename} 0x{sym.Offset:08x}\n")
-                    else:
-                        print(f"Unknown symbol\n {sym}")
+                        segment = p.sections[sym.Segment]
+                        address = segment.va + sym.Offset
 
-                    f.write(f"// {sym.Name}\n")
+                        f.write(f"// FUNCTION: {p.exename} 0x{address:08x}\n")
+                        breakpoint()
+                    else:
+                        dump_global(f, p, sym)
+
+        if module.unknowns:
+            f.write("\n\n// Unknown globals:\n")
+            f.write("// The PDB was slightly corrupted and we aren't sure which file these globals belong to.\n")
+
+        for sym, other in module.unknowns:
+            if other:
+                f.write("\n// WARNING: this global might actually belong to: " + other + "\n")
+            dump_global(f, p, sym)
+
+
+def dump_global(f, p, sym):
+    segment = p.sections[sym.Segment]
+    if segment.va is None:
+        return
+    address = segment.va + sym.Offset
+
+    if isinstance(sym, (codeview.GlobalData, codeview.PublicData)):
+        f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
+    elif isinstance(sym, codeview.LocalData):
+        f.write(f"// LOCAL: {p.exename} 0x{address:08x}\n")
+    else:
+        print(f"Unknown symbol\n {sym}")
+
+    f.write(f"// {sym.Name}\n")
+
 
 def symbol_sig(p, sym):
     breakpoint()
