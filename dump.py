@@ -16,7 +16,7 @@ import pydemangler
 extrafiles = defaultdict(list)
 
 def dump(p: Program, dest: str):
-    extrafiles = []
+    extrafiles.clear()
 
     # So... some of the contribs seem to be missing. They all seem to be uninitilized data.
     # We would rather have them in the dump, so lets scan nearby symbols to try and gues what module
@@ -87,11 +87,21 @@ def dump(p: Program, dest: str):
 
         dump_lib(p, lib)
 
+    for file, funcs in extrafiles.items():
+        filename = fix_path(file, "")
+        with open(filename, "w") as f:
+            for func in funcs:
+                f.write(f"// Function in module: {func.module.name}\n")
+                dump_func(f, p, func)
+
+
 
 def fix_path(path, lib_prefix):
     path = path.lower().replace("\\", "/")
     if path.startswith(simcopter.source_prefix):
         return path[len(simcopter.source_prefix):]
+    if path.startswith(simcopter.source_prefix2):
+        return path[len(simcopter.source_prefix2):]
     return lib_prefix + path
 
 def dump_lib(p, lib):
@@ -144,25 +154,14 @@ def dump_module(p, module, path):
 
                     func_source = func.source_file.lower()
                     if func_source != module_source:
-                        if "msdev/include" in func_source:
+                        if "msdev\\include" in func_source:
                             f.write(f"// LIBRARY: MSVC 0x{func.address:08x}\n")
                             f.write(f"// {func.name}\n\n")
                         else:
-                            print(f"Warning: Function {func.name} in {func_source} does not match module source {module_source}")
                             extrafiles[func_source].append(func)
                         continue
 
-                    f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
-
-                    f.write(f"{func_sig(p, func)} {{\n")
-                    for line, asm in func.disassemble():
-                        f.write(f"// LINE {line:d}:\n\tasm( \n")
-
-                        for asm_line in asm.split("\n")[:-1]:
-                            f.write(f"\"\t{asm_line}\"\n")
-                        f.write(");\n")
-
-                    f.write("}\n\n")
+                    dump_func(f, p, func)
                 else:
                     sym = thing
                     if contrib.is_code():
@@ -183,6 +182,19 @@ def dump_module(p, module, path):
                 f.write("\n// WARNING: this global might actually belong to: " + other + "\n")
             dump_global(f, p, sym)
 
+
+def dump_func(f, p, func):
+    f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
+
+    f.write(f"{func_sig(p, func)} {{\n")
+    for line, asm in func.disassemble():
+        f.write(f"// LINE {line:d}:\n\tasm( \n")
+
+        for asm_line in asm.split("\n")[:-1]:
+            f.write(f"\"\t{asm_line}\"\n")
+        f.write(");\n")
+
+    f.write("}\n\n")
 
 def dump_global(f, p, sym):
     segment = p.sections[sym.Segment]

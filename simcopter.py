@@ -12,6 +12,8 @@ extra_includes = [
 ]
 
 source_prefix = "c:/copter/source/"
+source_prefix2 = "/copter/source/"
+
 
 libs = {
     "COPTER_D": "",
