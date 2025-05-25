@@ -14,8 +14,6 @@ from tpi import *
 from gsi import Gsi, Pgsi, LoadSymbols, Visablity
 
 
-
-
 StreamNumT = Int16ul
 
 class DebugInfomationHeader(ConstructClass):
@@ -46,6 +44,7 @@ class SectionContrib(ConstructClass):
 
     def parsed(self, ctx):
         self.symbols = []
+        self.things = {}
 
     def alignment(self) -> int:
         align = (self.Characteristics & 0x00f00000) >> 20
@@ -89,6 +88,10 @@ class SectionContrib(ConstructClass):
 
     def __str__(self):
         return f"{self.Section}:{self.Offset:08x}-{self.Offset+self.Size-1:08x} Module: {self.ModuleIndex}, {self.characteristicsString()}"
+
+    def register(self, thing, offset, length):
+        self.things[offset] = thing
+
 
 
 class SectionMapEntry(ConstructClass):

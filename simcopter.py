@@ -10,3 +10,13 @@ extra_includes = [
     "C:\\Copter\\Source\\Game\\S3MOBILE.H",
     "c:\\copter\\source\\x\\Array2d.h",
 ]
+
+source_prefix = "c:/copter/source/"
+
+libs = {
+    "simcopter.exe": "",
+    "wcommon.lib": "common/",
+    "vrengine.lib": "engine/",
+    "game.lib": "game/",
+    "x.lib": "x/",
+}

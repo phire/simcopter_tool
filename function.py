@@ -15,6 +15,15 @@ class Function:
         segment = program.sections[symbols.Segment]
         self.address = segment.va + symbols.Offset
 
+        if self.contrib:
+            contrib, offset = self.contrib
+            contrib.register(self, offset, self.length)
+        elif module.library.name in ["LIBCMTD.lib"]:
+            pass
+        else:
+            breakpoint()
+
+
     def data(self):
         contrib, offset = self.contrib
         length = self.symbols.Len
@@ -23,10 +32,13 @@ class Function:
     def disassemble(self):
         data = self.data()
 
-        print(f"{self.source_file} {self.name} @ {self.address:08x}")
+        lines = []
         for (start, line), (end, _) in pairwise(chain(self.lines.items(), [(self.length+1, None)])):
             insts = x86.disassemble(data[start:end], self.address + start)
             inst = insts[0]
-            print(f"line {line}:")
+            s = ""
             for inst in insts:
-                print(f"      {inst.ip32:08x}    {inst}")
+                s += f"      {inst.ip32:08x}    {inst}\n"
+            lines.append((line, s))
+
+        return lines

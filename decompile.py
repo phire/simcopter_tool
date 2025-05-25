@@ -57,11 +57,6 @@ if __name__ == "__main__":
             pickle.dump(p, f)
 
 
-    for lib in p.libraries.values():
-        if lib.is_dll() or lib.name in ["OLDNAMES.lib", "LIBCMTD.lib"]:
-            continue
-        #print(lib)
-
     game = p.libraries["game.lib"]
     police = game.modules["s3police.cpp"]
     createfn = police.functions["PoliceCarClass::CreateInstance"]
@@ -73,7 +68,11 @@ if __name__ == "__main__":
 
     from classes import Class, parse_classes
 
-    p.classes = parse_classes(p)
+    #p.classes = parse_classes(p)
+
+    from dump import dump
+
+    dump(p, "gen")
 
 
     # for sym in p.unknownContribs:
@@ -120,7 +119,7 @@ if __name__ == "__main__":
     # print(cdebugwin)
 
     x = p.libraries["x.lib"]
-    b = p.libraries[""]
+    b = p.libraries["simcopter.exe"]
 
     # for (kl, l) in p.libraries.items():
     #     if kl == "":

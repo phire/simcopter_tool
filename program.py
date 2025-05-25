@@ -36,7 +36,7 @@ class Module:
             if ext(name) in ("res", "dll"):
                 self.sourceFile = name
             elif ext(name) in ("obj"):
-                self.sourceFile = name + ".c"
+                self.sourceFile = name
             else:
                 raise Exception(f"don't know source name for {name}, {sources}")
         self.includes = {p: program.getInclude(p) for p in sources if ext(p) in ('h', 'hpp')}
@@ -58,6 +58,12 @@ class Module:
 
             for file in linesInfo.Files:
                 lines_map.update(file.children)
+
+        for g in self.globals:
+            try:
+                g.contrib.register(g, g.Offset - g.contrib.Offset, 0)
+            except AttributeError:
+                continue
 
         for sym in symbols or []:
             if isinstance(sym, (ObjName, CompileFlags)):
@@ -102,10 +108,12 @@ class Module:
                 raise Exception(f"Unknown root symbol type {sym} in {self.name}")
 
 
+
+
 class Library:
     # multiple .obj files might be pre-linked into a library
     def __init__(self, name, path):
-        self.name = path.split('\\')[-1]
+        self.name = name
         self.path = path
         self.commonPath = None
         self.modules = {}
@@ -113,7 +121,7 @@ class Library:
     def __str__(self):
         s = f"Library: {self.name} @ {self.path}"
 
-        for m in self.modules:
+        for m in self.modules.values():
             s += f"\n    {m.sourceFile or m.name }"
             for sc in m.sectionContribs:
                 s += f"\n        {sc.Section}:{sc.Offset:08x} {sc.Size:x} {sc.characteristicsString()}"
@@ -124,9 +132,16 @@ class Library:
         return all([ext(m.name) == 'dll' for m in self.modules.values()])
 
     def addModule(self, m):
+
         fullpath = m.sourceFile.lower()
+
         filename = fullpath.split('\\')[-1]
         path = fullpath[:-len(filename)]
+        self.modules[filename] = m
+
+        if fullpath.endswith('.res'):
+            return
+
         if not self.commonPath:
             # Start by assuming everything but the filename is common
             self.commonPath = path
@@ -147,9 +162,9 @@ class Library:
                 filename = fullpath[len(self.commonPath):]
 
                 # update all existing keys
-                self.modules = {extra + k: v for k, v in self.modules.items()}
+                #self.modules = {extra + k: v for k, v in self.modules.items()}
 
-        self.modules[filename] = m
+
 
 class Section:
     def __init__(self, idx, section):
@@ -181,9 +196,9 @@ class Program:
         dbi = DebugInfomation.parse_stream(msf.getStream(0x3))
 
         # dummy library to hold modules not in a library, directly linked into the executable
-        top = Library("", "")
+        top = Library("simcopter.exe", "C:\\Copter\\source\\")
 
-        self.libraries = { "" : top }
+        self.libraries = { "simcopter.exe" : top }
         self.modules = []
         self.extra_globals = []
         self.includes = {}
