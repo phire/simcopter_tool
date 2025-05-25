@@ -8,4 +8,8 @@ dependencies = [
     "construct>=2.10.70",
     "iced-x86>=1.21.0",
     "intervaltree>=3.1.0",
+    "pydemangler",
 ]
+
+[tool.uv.sources]
+pydemangler = { git = "https://github.com/wbenny/pydemangler.git" }

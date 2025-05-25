@@ -111,7 +111,7 @@ class Symbols:
     def __init__(self, symbols):
         self.symbols = []
         self.byRecOffset = {}
-        self.byAddress = {}
+        self.bySegOffset = {}
 
         for i, rec in enumerate(symbols):
             offset = rec._addr
@@ -125,11 +125,21 @@ class Symbols:
 
             self.symbols.append(rec)
             self.byRecOffset[offset] = rec
+            try:
+                self.bySegOffset[(rec.Segment, rec.Offset)] = rec
+            except AttributeError:
+                pass
 
 
     def fromOffset(self, offset):
         try:
             return self.byRecOffset[offset]
+        except KeyError:
+            return None
+
+    def fromSegmentOffset(self, segment, offset):
+        try:
+            return self.bySegOffset[(segment, offset)]
         except KeyError:
             return None
 

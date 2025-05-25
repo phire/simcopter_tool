@@ -15,6 +15,8 @@ class Function:
         segment = program.sections[symbols.Segment]
         self.address = segment.va + symbols.Offset
 
+        self.sym = program.globals.fromSegmentOffset(symbols.Segment, symbols.Offset)
+
         if self.contrib:
             contrib, offset = self.contrib
             contrib.register(self, offset, self.length)

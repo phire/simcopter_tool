@@ -225,14 +225,8 @@ class LfPointer(TypeLeaf):
         "Type" / TypeIndex,
     )
 
-    def __str__(self):
-        match self.Attributes.ptrmode:
-            case "Ptr":
-                s = f"{self.Type.shortstr()}*"
-            case "Ref":
-                s = f"{self.Type.shortstr()}&"
-            case _:
-                s = f"{self.Attributes.ptrmode} to: {self.Type.shortstr()}"
+    def attributes(self):
+        s = ""
         if self.Attributes.ptrtype != "PtrNear32":
             s = f"{self.Attributes.ptrtype} {s}"
         if self.Attributes.isunaligned:
@@ -244,6 +238,28 @@ class LfPointer(TypeLeaf):
         if self.Attributes.isflat32:
             s = f"flat32 {s}"
         return s
+
+    def shortstr(self):
+        s = f"{self.Attributes.ptrmode} to: {self.Type.shortstr()}"
+        return self.attributes() + s
+
+    def typestr(self):
+        match self.Attributes.ptrmode:
+            case "Ptr":
+                if isinstance(self.Type.Type, LfProcedure):
+                    #breakpoint()
+                    # Special case for function pointers
+                    fn = self.Type.Type
+                    s = f"{fn.rvtype} (*)({', '.join(str(arg.typestr()) for arg in fn.args)})"
+                else:
+                    s = f"{self.Type.typestr()}*"
+            case "Ref":
+                s = f"{self.Type.typestr()}&"
+            case _:
+                s = f"{self.Attributes.ptrmode} to: {self.Type.typestr()}"
+        return self.attributes() + s
+
+
 
 @TpRec(0x0003) # LF_ARRAY_16t
 class LfArray(TypeLeaf):
@@ -346,6 +362,13 @@ class LfProcedure(TypeLeaf):
         del self.arglist
         del self.parmcount
 
+    def shortstr(self):
+        breakpoint()
+        s = f"{self.rvtype} ("
+        for arg in self.args:
+            s += f"{arg}, "
+        s += ")"
+        return s
 
 @TpRec(0x0009) # LF_MFUNCTION_16t
 class LfMemberFunction(TypeLeaf):

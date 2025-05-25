@@ -13,6 +13,9 @@ class BaseType:
     def shortstr(self):
         return self.__str__()
 
+    def typestr(self):
+        return self.shortstr()
+
     def addRef(self, ref):
         self._refs.append(ref)
 

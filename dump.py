@@ -5,9 +5,11 @@ import sys, os
 
 import simcopter
 import codeview
+import tpi
 
 
 from collections import defaultdict
+import pydemangler
 
 
 
@@ -97,7 +99,7 @@ def dump_module(p, module, path):
 
                     f.write(f"// FUNCTION: SIMCOPTER 0x{func.address:08x}\n")
 
-                    f.write(f"{func.name} {{\n")
+                    f.write(f"{func_sig(p, func)} {{\n")
                     for line, asm in func.disassemble():
                         f.write(f"// LINE {line:d}:\n\tasm( \n")
 
@@ -120,6 +122,36 @@ def dump_module(p, module, path):
 
                     f.write(f"// {sym.Name}\n")
 
+def symbol_sig(p, sym):
+    breakpoint()
+
+def find_type(p, func):
+    if not func.symbols:
+        return None
+
+    try:
+        TI = func.symbols.Type
+        if TI == 0:
+            return None
+    except AttributeError:
+        return None
+
+    return p.types.types[TI]
+
+def func_sig(p, func):
+    # try and find type info
+    ty = find_type(p, func)
+    if ty is None:
+        if func.sym is not None:
+            return pydemangler.demangle(func.sym.Name)
+        return f"UNKNOWN_SIG void {func.name}(/* no symbols */)"
+
+    if isinstance(ty, tpi.LfProcedure):
+        args = []
+    else:
+        args = [arg.typestr() for arg in ty.args]
+
+    return f"{ty.rvtype.Type.typestr()} {func.name}({', '.join(args)})"
 
 
 
