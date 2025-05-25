@@ -2,7 +2,7 @@
 
 class BaseType:
     def __init__(self):
-        self._refs = []
+        self._refs = set()
 
     def __str__(self):
         try:
@@ -17,7 +17,10 @@ class BaseType:
         return self.shortstr()
 
     def addRef(self, ref):
-        self._refs.append(ref)
+        self._refs.add(ref)
+
+    def type_size(self):
+        return self.size
 
 # Special types
 
@@ -109,16 +112,17 @@ def derive_pointers(cls):
         # ("P", 0x100, "*", "16 bit pointer"),
         # ("PF", 0x200, "far *", "16:16 far pointer"),
         # ("PH", 0x300, "huge *", "16:16 huge pointer"),
-        ("P", 0x400, "*", "32 bit pointer"),
-        ("PF", 0x500, "far *", "16:32 pointer"),
-        ("P64", 0x600, "far __ptr64 *", "64 bit pointer"),
+        ("P", 0x400, "*", 4, "32 bit pointer"),
+        ("PF", 0x500, "far *", 6, "16:32 pointer"),
+        ("P64", 0x600, "far __ptr64 *", 8, "64 bit pointer"),
     ]
-    for prefix, offset, code, comment in pointers:
+    for prefix, offset, code, size, comment in pointers:
         class_name = f"{prefix}{cls.__name__}"
         newclass = type(class_name, (cls,),
             {
                 "TI": cls.TI + offset,
                 "s": f"{cls.s} {code}",
+                "size": size,
                 "__doc__": f"{comment} to {cls.__doc__}"
             }
         )
@@ -131,162 +135,189 @@ class Char(BaseType):
     """8 bit signed"""
     TI = 0x0010
     s = "char"
+    size = 1
 
 @derive_pointers
 class UChar(BaseType):
     """8 bit unsigned"""
     TI = 0x0020
     s = "unsigned char"
+    size = 1
 
 @derive_pointers
 class RChar(BaseType):
     """really a char"""
     TI = 0x0070
     s = "char"
+    size = 1
 
 @derive_pointers
 class WChar(BaseType):
     """wide char"""
     TI = 0x0071
     s = "wchar_t"
+    size = 2
 
 @derive_pointers
 class Char16(BaseType):
     """16-bit unicode char"""
     TI = 0x007a
     s = "char16_t"
+    size = 2
 
 @derive_pointers
 class Char32(BaseType):
     """32-bit unicode char"""
     TI = 0x007b
     s = "char32_t"
+    size = 4
 
 @derive_pointers
 class Int1(BaseType):
     """8 bit signed int"""
     TI = 0x0068
     s = "int8_t"
+    size = 1
 
 @derive_pointers
 class UInt1(BaseType):
     """8 bit unsigned int"""
     TI = 0x0069
     s = "uint8_t"
+    size = 1
 
 @derive_pointers
 class Short(BaseType):
     """16 bit signed"""
     TI = 0x0011
     s = "short"
+    size = 1
 
 @derive_pointers
 class UShort(BaseType):
     """16 bit unsigned"""
     TI = 0x0021
     s = "unsigned short"
+    size = 2
 
 @derive_pointers
 class Int2(BaseType):
     """16 bit signed int"""
     TI = 0x0072
     s = "int16_t"
+    size = 2
 
 @derive_pointers
 class UInt2(BaseType):
     """16 bit unsigned int"""
     TI = 0x0073
     s = "uint16_t"
+    size = 2
 
 @derive_pointers
 class Long(BaseType):
     """32 bit signed"""
     TI = 0x0012
     s = "long"
+    size = 4
 
 @derive_pointers
 class ULong(BaseType):
     """32 bit unsigned"""
     TI = 0x0022
     s = "unsigned long"
+    size = 4
 
 @derive_pointers
 class Int4(BaseType):
     """32 bit signed int"""
     TI = 0x0074
     s = "int32_t"
+    size = 4
 
 @derive_pointers
 class UInt4(BaseType):
     """32 bit unsigned int"""
     TI = 0x0075
     s = "uint32_t"
+    size = 4
 
 @derive_pointers
 class Quad(BaseType):
     """64 bit signed"""
     TI = 0x0013
     s = "quad"
+    size = 8
 
 @derive_pointers
 class UQuad(BaseType):
     """64 bit unsigned"""
     TI = 0x0023
     s = "unsigned quad"
+    size = 8
 
 @derive_pointers
 class Int8(BaseType):
     """64 bit signed int"""
     TI = 0x0076
     s = "int64_t"
+    size = 8
 
 @derive_pointers
 class UInt8(BaseType):
     """64 bit unsigned int"""
     TI = 0x0077
     s = "uint64_t"
+    size = 8
 
 @derive_pointers
 class Oct(BaseType):
     """128 bit signed"""
     TI = 0x0014
     s = "octet"
+    size = 16
 
 @derive_pointers
 class UOct(BaseType):
     """128 bit unsigned"""
     TI = 0x0024
     s = "unsigned octet"
+    size = 16
 
 @derive_pointers
 class Int16(BaseType):
     """128 bit signed int"""
     TI = 0x0078
     s = "int128_t"
+    size = 16
 
 @derive_pointers
 class UInt16(BaseType):
     """128 bit unsigned int"""
     TI = 0x0079
     s = "uint128_t"
+    size = 16
 
 @derive_pointers
 class Real32(BaseType):
     """32 bit real"""
     TI = 0x0040
     s = "float"
+    size = 4
 
 @derive_pointers
 class Real64(BaseType):
     """64 bit real"""
     TI = 0x0041
     s = "double"
+    size = 8
 
 @derive_pointers
 class Real80(BaseType):
     """80 bit real"""
     TI = 0x0042
     s = "long double"
+    size = 10  # 80 bits, but stored in 10 bytes
 
 @derive_pointers
 class CPLX32(BaseType):
@@ -313,18 +344,21 @@ class Bool8(BaseType):
     """8 bit boolean"""
     TI = 0x0030
     s = "bool"
+    size = 1
 
 @derive_pointers
 class Bool16(BaseType):
     """16 bit boolean"""
     TI = 0x007e
     s = "bool16_t"
+    size = 2
 
 @derive_pointers
 class Bool32(BaseType):
     """32 bit boolean"""
     TI = 0x007f
     s = "bool32_t"
+    size = 4
 
 @derive_pointers
 class Bool64(BaseType):

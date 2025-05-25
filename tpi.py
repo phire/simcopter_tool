@@ -34,6 +34,9 @@ class TypeLeaf(ConstructClass):
     def fullstr(self):
         return self.__str__()
 
+    def type_size(self):
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement type_size()")
+
 
 class TypeIndex(ConstructValueClass):
     subcon = Int16ul
@@ -49,6 +52,9 @@ class TypeIndex(ConstructValueClass):
         if self.value == 0:
             return "Nil"
         return f"TI(0x{self.value:04x})"
+
+    def __hash__(self):
+        return self.value.__hash__()
 
     def parsed(self, ctx):
         self.Type = None
@@ -265,15 +271,24 @@ class LfPointer(TypeLeaf):
 class LfArray(TypeLeaf):
     subcon = Struct(
         "Type" / TypeIndex,
-        "Count" / Dec(Int16ul),
-        "Size" / VarInt,
+        "IndexType" / TypeIndex, # type index of index type
+        "Size" / VarInt, # size in bytes
         Const(0, Int8ul), # technically this is a zero-length string for the name
                           # but I don't think arrays can be named
         #"Name" / PascalString(Int8ul, "ascii"),
     )
 
+    def parsed(self, ctx):
+        assert self.IndexType.value == 17, "Array index type should be uint32_t"
+
     def shortstr(self):
-        return f"{self.Type.shortstr()}[{self.Count}]"
+        element_size = self.Type.Type.type_size()
+        count = self.Size.value // element_size
+
+        return f"{self.Type.shortstr()}[{count}]"
+
+    def type_size(self):
+        return self.Size.value
 
 class FrowardRef(TypeLeaf):
     def linkTIs(self, tpi):
@@ -317,6 +332,14 @@ class LfClass(FrowardRef):
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
+    def type_size(self):
+        if self.properties.fwdref:
+            try:
+                return self._definition.type_size()
+            except AttributeError:
+                raise Exception(f"Forward reference {self.Name} has no definition")
+        return self.Size.value
+
 @TpRec(0x0005) # LF_STRUCTURE_16t
 class LfStruct(LfClass):
     pass
@@ -330,6 +353,9 @@ class LfUnion(FrowardRef):
         "Size" / VarInt,
         "Name" / PascalString(Int8ul, "ascii"),
     )
+
+    def type_size(self):
+        return self.Size.value
 
 
 @TpRec(0x0007) # LF_ENUM_16t
