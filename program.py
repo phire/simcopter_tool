@@ -8,6 +8,7 @@ from coff import Executable
 from intervaltree import Interval, IntervalTree
 
 from function import Function
+from pathlib import Path
 
 def ext(filename : str):
     try:
@@ -196,9 +197,11 @@ class Program:
         dbi = DebugInfomation.parse_stream(msf.getStream(0x3))
 
         # dummy library to hold modules not in a library, directly linked into the executable
-        top = Library("simcopter.exe", "C:\\Copter\\source\\")
+        exename = Path(filename).stem.upper()
+        self.exename = exename
+        top = Library(exename, "C:\\Copter\\source\\")
 
-        self.libraries = { "simcopter.exe" : top }
+        self.libraries = { exename : top }
         self.modules = []
         self.extra_globals = []
         self.includes = {}

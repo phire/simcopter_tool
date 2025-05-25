@@ -119,7 +119,7 @@ if __name__ == "__main__":
     # print(cdebugwin)
 
     x = p.libraries["x.lib"]
-    b = p.libraries["simcopter.exe"]
+    b = p.libraries["COPTER_D"]
 
     # for (kl, l) in p.libraries.items():
     #     if kl == "":

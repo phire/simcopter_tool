@@ -14,7 +14,7 @@ extra_includes = [
 source_prefix = "c:/copter/source/"
 
 libs = {
-    "simcopter.exe": "",
+    "COPTER_D": "",
     "wcommon.lib": "common/",
     "vrengine.lib": "engine/",
     "game.lib": "game/",

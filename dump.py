@@ -73,13 +73,13 @@ def dump_module(p, module, path):
 
 
                     if func.name.endswith(" destructor'") or func.name.endswith(" iterator'"):
-                        f.write(f"// FUNCTION: SIMCOPTER 0x{func.address:08x}\n")
+                        f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
                         f.write(f"// {func.name}\n\n")
                         continue
 
                     if func.name.startswith("$E"):
                         # todo: work out what the fuck these are
-                        f.write(f"// FUNCTION: SIMCOPTER 0x{func.address:08x}\n")
+                        f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
                         f.write(f"// {func.name}\n\n")
                         continue
 
@@ -97,7 +97,7 @@ def dump_module(p, module, path):
                             extrafiles[func_source].append(func)
                         continue
 
-                    f.write(f"// FUNCTION: SIMCOPTER 0x{func.address:08x}\n")
+                    f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
 
                     f.write(f"{func_sig(p, func)} {{\n")
                     for line, asm in func.disassemble():
@@ -111,12 +111,12 @@ def dump_module(p, module, path):
                 else:
                     sym = thing
                     if contrib.is_code():
-                        f.write(f"// FUNCTION: SIMCOPTER 0x{sym.Offset:08x}\n")
+                        f.write(f"// FUNCTION: {p.exename} 0x{sym.Offset:08x}\n")
                         breakpoint()
                     elif isinstance(sym, (codeview.GlobalData, codeview.PublicData)):
-                        f.write(f"// GLOBAL: SIMCOPTER 0x{sym.Offset:08x}\n")
+                        f.write(f"// GLOBAL: {p.exename} 0x{sym.Offset:08x}\n")
                     elif isinstance(sym, codeview.LocalData):
-                        f.write(f"// LOCAL: SIMCOPTER 0x{sym.Offset:08x}\n")
+                        f.write(f"// LOCAL: {p.exename} 0x{sym.Offset:08x}\n")
                     else:
                         print(f"Unknown symbol\n {sym}")
 
