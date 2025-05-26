@@ -6,9 +6,10 @@ from codeview import VarInt
 from collections import defaultdict
 
 class TypeLeaf(ConstructClass):
-    def linkTIs(self, tpi, history=[]):
-        if any(x is self for x in history):
+    def linkTIs(self, tpi, history=set()):
+        if self._addr in history:
             return
+        history.add(self._addr)
         for k, lf in self.items():
             if k.startswith("_"):
                 continue
@@ -17,7 +18,7 @@ class TypeLeaf(ConstructClass):
             elif isinstance(lf, ListContainer) or isinstance(lf, list):
                 for item in lf:
                     if isinstance(item, TypeLeaf):
-                        item.linkTIs(tpi, history + [self])
+                        item.linkTIs(tpi, history)
 
     def addRef(self, ref):
         try:
@@ -54,7 +55,10 @@ class TypeIndex(ConstructValueClass):
         return f"TI(0x{self.value:04x})"
 
     def __hash__(self):
-        return self.value.__hash__()
+        try:
+            return hash(self.value)
+        except AttributeError:
+            return 0
 
     def parsed(self, ctx):
         self.Type = None
@@ -81,10 +85,18 @@ class Bitfield(ConstructClass):
                 attrs.append(str(v))
         return " ".join(attrs)
 
+    # Override for a slight performance improvement
+    @classmethod
+    def _parse(cls, stream, context, path):
+        obj = cls.subcon._parse(stream, context, path)
+        self = cls.__new__(cls)
+        self._apply(obj)
+
+        return self
+
 class StructProperty(Bitfield):
     # bitfield describing class/struct/union/enum properties
-    subcon = FixedSized(2,
-        BitsSwapped(BitStruct(
+    subcon = BitsSwapped(BitStruct(
         # Total, 16 bits
             "packed" / Flag,  # struct is packed
             "ctor" / Flag,    # constructors or destructors present
@@ -100,7 +112,7 @@ class StructProperty(Bitfield):
             "hfa" / Enum(BitsInteger(2), Nil=0, Float=2, Dobule=1, Other=3), # none/float/double/other
             "intrinsics" / Flag, # this class is an intrinsic type (like __m128)
             "mocom" / Enum(BitsInteger(2), Nil=0, Ref=2, Value=1, Interface=3), # none/ref/value/interface
-        )),
+        )
     )
 
 class FunctionAttributies(Bitfield):
@@ -278,8 +290,8 @@ class LfArray(TypeLeaf):
         #"Name" / PascalString(Int8ul, "ascii"),
     )
 
-    def parsed(self, ctx):
-        assert self.IndexType.value == 17, "Array index type should be uint32_t"
+    #def parsed(self, ctx):
+        #assert self.IndexType.value == 17, "Array index type should be uint32_t"
 
     def shortstr(self):
         element_size = self.Type.Type.type_size()

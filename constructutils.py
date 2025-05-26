@@ -450,7 +450,7 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
         # Use parsed instead, if you need a post-parsing constructor
         self = cls.__new__(cls)
         self._addr = addr
-        self._path = path
+        #self._path = path
         self._meta = {}
         self._size = stream.tell() - addr
         if self.sizeof.__func__ == ConstructClassBase.sizeof.__func__:
@@ -510,14 +510,14 @@ class ConstructClassBase(Reloadable, metaclass=ReloadableConstructMeta):
 
         cls._set_meta(self, stream)
 
-        if self._addr > 0x10000:
-            desc = f"{cls.name} (end: {self._addr + self._size:#x})"
-            if getattr(stream, "meta_fn", None):
-                meta = stream.meta_fn(self._addr, None)
-                if meta is not None:
-                    desc += " " + meta
-            g_struct_trace.add((self._addr, desc))
-            g_struct_addrmap[self._addr] = f"{cls.name}"
+        # if self._addr > 0x10000:
+        #     desc = f"{cls.name} (end: {self._addr + self._size:#x})"
+        #     if getattr(stream, "meta_fn", None):
+        #         meta = stream.meta_fn(self._addr, None)
+        #         if meta is not None:
+        #             desc += " " + meta
+        #     g_struct_trace.add((self._addr, desc))
+        #     g_struct_addrmap[self._addr] = f"{cls.name}"
 
         return self
 
@@ -917,10 +917,14 @@ class ConstructValueClass(ConstructClassBase):
         raise Exception(f"Invalid index {i}")
 
     def __getstate__(self):
-        ret = self.__dict__.copy()
+        ret = super.__getstate__(self)
+        try:
+            del ret["_io"]
+        except KeyError:
+            pass
         try:
             del ret["_stream"]
-        except:
+        except KeyError:
             pass
         return ret
 
