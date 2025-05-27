@@ -5,10 +5,8 @@ from pdb_parser import *
 from gsi import *
 from tpi import TypeInfomation
 from coff import Executable
-from intervaltree import Interval, IntervalTree
 
 from function import Function
-from pathlib import Path
 
 def ext(filename : str):
     try:
@@ -169,16 +167,6 @@ class Library:
 
 
 
-class Section:
-    def __init__(self, idx, section):
-        self.idx = idx
-        if section:
-            self.name = section.Name
-            self.va = 0x400000 + section.VirtualAddress
-            self.data = section.Data
-        else:
-            self.va = None
-        self.contribs = IntervalTree()
 
 class UnknownContribs:
     def __init__(self):
@@ -194,71 +182,30 @@ class UnknownContribs:
 
 
 class Program:
-    def __init__(self, filename, exe):
-        f = open(filename, "rb")
-        msf = MsfFile.parse_stream(f)
-
-        dbi = DebugInfomation.parse_stream(msf.getStream(0x3))
+    def __init__(self, data):
 
         # dummy library to hold modules not in a library, directly linked into the executable
-        exename = Path(filename).stem.upper()
-        self.exename = exename
-        top = Library(exename, "C:\\Copter\\source\\")
+        self.exename = data.exename
+        top = Library(data.exename, "C:\\Copter\\source\\")
 
-        self.libraries = { exename : top }
+        self.libraries = { data.exename : top }
         self.modules = []
         self.extra_globals = []
         self.includes = {}
-
-        self.sections = [ Section(0, None) ] + [ Section(i + 1, s) for i, s in enumerate(exe.Sections) ] + [ Section(7, None) ]
-
-        for e in dbi.SectionMap.Entries:
-            self.sections[e.Frame].size = e.SectionLength
-            #print(e)
-
-        module_contribs = [[] for _ in dbi.ModuleInfo]
-        for sc in dbi.SectionContribution:
-            # put section contributions into the correct modules
-            module_contribs[sc.ModuleIndex].append(sc)
-
-            # add to interval trees for quick lookup
-            section = self.sections[sc.Section]
-            section.contribs[sc.Offset : sc.Offset + sc.Size] = sc
-            sc._data = section.data[sc.Offset : sc.Offset + sc.Size]
-
+        self.sections = data.sections
         self.unknownContribs = UnknownContribs()
+        self.types = data.types
 
-
-        print("parsing types...    ", file=sys.stderr, end='', flush=True)
-        now = time.time()
-
-        # The type records are always in stream 2
-        self.types = TypeInfomation.parse_stream(msf.getStream(2))
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
-
-        print("parsing GSI/PGSI... ", file=sys.stderr, end='', flush=True)
-        now = time.time()
+        # The symbol record stream contains all globals (and public globals)
+        self.globals = Symbols(data.symbols)
 
         # the only thing we really care about from GSI and PSGI is what visibility they apply to global symbols.
         # Though in theory it might be possible to learn something about the ordering
 
-        gsi = Gsi.parse_stream(msf.getStream(dbi.Header.GlobalSymbolStream))
-        pgsi = Pgsi.parse_stream(msf.getStream(dbi.Header.PublicSymbolStream))
+        data.gsi.apply_visablity(Visablity.Global, self.globals)
+        data.pgsi.gsi.apply_visablity(Visablity.Public, self.globals)
 
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
-
-        print(f"parsing symbols...  ", file=sys.stderr, end='', flush=True)
-        now = time.time()
-
-        # The symbol record stream contains all globals (and public globals)
-        self.globals = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
-
-        gsi.apply_visablity(Visablity.Global, self.globals)
-        pgsi.gsi.apply_visablity(Visablity.Public, self.globals)
-
-        module_globals = [[] for _ in dbi.ModuleInfo]
+        module_globals = [[] for _ in data.modules]
         for sym in self.globals:
             try:
                 getModuleId = sym.getModuleId
@@ -273,19 +220,12 @@ class Program:
             else:
                 self.extra_globals.append(sym)
 
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
-
-        print(f"parsing modules...  ", file=sys.stderr, end='', flush=True)
-        now = time.time()
-
         # process all modules
-        for i, (modi, sources, contribs, globs) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules, module_contribs, module_globals)):
+        for i, (modi, sources, contribs, symbols, lines) in enumerate(data.modules):
 
             library = top
             name = modi.ModuleName.split('\\')[-1]
-            symbols = None
-            lines = None
+            globs = module_globals[i]
 
             if modi.ModuleName != modi.ObjFilename:
                 lib_name = modi.ObjFilename.split('\\')[-1]
@@ -294,36 +234,10 @@ class Program:
                     library = Library(lib_name, modi.ObjFilename)
                     self.libraries[lib_name] = library
 
-                if lib_name in self.libraries:
-                    lib = self.libraries[lib_name]
-
-            if modi.Stream != 0xffff:
-                mod_stream = msf.getStream(modi.Stream)
-                moduleStream = Struct(
-                    "Symbols" / If(modi.SymbolsSize, (RestreamData(FixedSized(modi.SymbolsSize, GreedyBytes),
-                        Struct(
-                            "Signature" / Int32ul,
-                            "Records" / RepeatUntil(lambda x, lst, ctx: x._io.tell() == modi.SymbolsSize, CodeviewRecord),
-                            #"Records" / HexDump(GreedyBytes),
-                        )
-                    ))),
-                    "Lines" / If(modi.LinesSize, (RestreamData(FixedSized(modi.LinesSize, GreedyBytes),
-                        LinesSection
-                        #HexDump(GreedyBytes),
-                    ))))
-
-                mod_details = moduleStream.parse_stream(mod_stream)
-
-                symbols = toTree(list(mod_details.Symbols.Records)) if mod_details.Symbols else None
-                lines = mod_details.Lines
-
             m = Module(self, library, i, name, symbols, sources, lines, contribs, globs)
 
             self.modules.append(m)
             library.addModule(m)
-
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
 
 
     def getInclude(self, filename):

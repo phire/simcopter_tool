@@ -155,6 +155,4 @@ def LoadSymbols(symbolRecordStream):
             Aligned(4, CodeviewRecord)
         ).parse_stream(symbolRecordStream)
 
-
-
-    return Symbols(symbols)
+    return symbols

@@ -1,10 +1,11 @@
 
-from program import Program
+import time
+from pdb_parser import ProgramData
 from coff import Executable
 
 import construct
 
-import pickle, os, sys, copyreg
+import pickle, os, sys
 from collections import OrderedDict
 
 def better_getstate(self):
@@ -31,6 +32,9 @@ if __name__ == "__main__":
     pdb_file = "../debug_build_beta/COPTER_D.PDB"
     exe_file = "../debug_build_beta/COPTER_D.EXE"
 
+    print("loading cache...    ", file=sys.stderr, end='', flush=True)
+    now = time.time()
+
     try:
         # check if we have a cache
         modified = os.path.getmtime('cache.pkl')
@@ -43,19 +47,36 @@ if __name__ == "__main__":
                 if os.path.getmtime(file) > modified:
                     raise Exception(f"{file} has been modified")
 
-            p = pickle.load(f)
+            cached_data = pickle.load(f)
+            elapsed = int((time.time() - now) * 1000)
+            print(f"done, {elapsed} ms", file=sys.stderr)
+
     except Exception as e:
         print(f"Cache load failed because: {e}", file=sys.stderr)
 
         exe = Executable(exe_file)
-        p = Program(pdb_file, exe)
+        cached_data = ProgramData(pdb_file, exe)
 
         # dump to cache
         with open("cache.pkl", "wb") as f:
             depends = [m.__file__ for m in sys.modules.values() if hasattr(m, '__file__') and m.__file__ not in (__file__, None)]
             pickle.dump(((pdb_file, exe_file), depends), f)
-            pickle.dump(p, f)
+            pickle.dump(cached_data, f)
 
+# avoid importing things until after the cache is loaded
+# otherwise they will get counted as dependencies
+
+from program import Program
+from dump import dump
+
+if __name__ == "__main__":
+    print("processing...    ", file=sys.stderr, end='', flush=True)
+    now = time.time()
+
+    p = Program(cached_data)
+
+    elapsed = int((time.time() - now) * 1000)
+    print(f"done, {elapsed} ms", file=sys.stderr)
 
     game = p.libraries["game.lib"]
     police = game.modules["s3police.cpp"]
@@ -66,45 +87,7 @@ if __name__ == "__main__":
     scanfn = police.functions["PoliceCarClass::ScanForBadGuys"]
     #scanfn.disassemble()
 
-    from classes import Class, parse_classes
-
-    #p.classes = parse_classes(p)
-
-    from dump import dump
-
     dump(p, "gen")
-
-
-    # for sym in p.unknownContribs:
-    #     print(sym)
-    #     for idx in range(sym.index - 1, 0, -1):
-    #         try:
-    #             contrib = p.globals[idx].contrib
-    #             if contrib.module:
-    #                 print(f"After {contrib.module.sourceFile}")
-    #                 break
-    #         except:
-    #             try:
-    #                 moduleId = p.globals[idx].getModuleId(p)
-    #                 if moduleId:
-    #                     print(f"After {p.modules[moduleId].sourceFile}")
-    #                     break
-    #             except AttributeError:
-    #                 continue
-    #     for idx in range(sym.index, len(p.globals)):
-    #         try:
-    #             contrib = p.globals[idx].contrib
-    #             if contrib.module:
-    #                 print(f"Before {contrib.module.sourceFile}\n")
-    #                 break
-    #         except:
-    #             try:
-    #                 moduleId = p.globals[idx].getModuleId(p)
-    #                 if moduleId:
-    #                     print(f"Before {p.modules[moduleId].sourceFile}\n")
-    #                     break
-    #             except AttributeError:
-    #                 continue
 
 
     # for inc in includes.values():

@@ -1,5 +1,6 @@
 
 
+import time, sys
 from construct import *
 from construct.debug import Debugger
 
@@ -12,7 +13,8 @@ from codeview import *
 from lines import *
 from tpi import *
 from gsi import Gsi, Pgsi, LoadSymbols, Visablity
-
+from pathlib import Path
+from intervaltree import Interval, IntervalTree
 
 StreamNumT = Int16ul
 
@@ -197,11 +199,111 @@ class DebugInfomation(ConstructClass):
         assert size + DebugInfomationHeader.sizeof() == self._stream.size
 
 
-class programData:
-    def __init__(self, fil):
-        pass
+class Section:
+    def __init__(self, idx, section):
+        self.idx = idx
+        if section:
+            self.name = section.Name
+            self.va = 0x400000 + section.VirtualAddress
+            self.data = section.Data
+        else:
+            self.va = None
+        self.contribs = IntervalTree()
+
+class ProgramData:
+    """
+    This class holds all the data parsed from a PDB file, including type information,
+    global and public symbols, and module information.
+    Since construct takes a long time to parse, this data is cached between runs.
+    """
+    def __init__(self, filename, exe):
+        self.exename = Path(filename).stem.upper()
+
+        f = open(filename, "rb")
+        msf = MsfFile.parse_stream(f)
+
+        # debug information is always in stream 0x3
+        dbi = DebugInfomation.parse_stream(msf.getStream(0x3))
+
+        self.sections = [ Section(0, None) ] + [ Section(i + 1, s) for i, s in enumerate(exe.Sections) ] + [ Section(7, None) ]
+
+        for e in dbi.SectionMap.Entries:
+            self.sections[e.Frame].size = e.SectionLength
+            #print(e)
+
+        module_contribs = [[] for _ in dbi.ModuleInfo]
+        for sc in dbi.SectionContribution:
+            # put section contributions into the correct modules
+            module_contribs[sc.ModuleIndex].append(sc)
+
+            # add to interval trees for quick lookup
+            section = self.sections[sc.Section]
+            section.contribs[sc.Offset : sc.Offset + sc.Size] = sc
+            sc._data = section.data[sc.Offset : sc.Offset + sc.Size]
 
 
+        print("parsing types...    ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
+        # The type records are always in stream 2
+        self.types = TypeInfomation.parse_stream(msf.getStream(2))
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        print("parsing GSI/PGSI... ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
+        self.gsi = Gsi.parse_stream(msf.getStream(dbi.Header.GlobalSymbolStream))
+        self.pgsi = Pgsi.parse_stream(msf.getStream(dbi.Header.PublicSymbolStream))
+
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        print(f"parsing symbols...  ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
+        # The symbol record stream contains all globals (and public globals)
+        self.symbols = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
+
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        print(f"parsing modules...  ", file=sys.stderr, end='', flush=True)
+        now = time.time()
+
+        # parse all modules
+        self.modules = []
+        for i, (modi, sources, contribs) in enumerate(zip(dbi.ModuleInfo, dbi.SourceInfo.Modules, module_contribs)):
+
+            if modi.Stream != 0xffff:
+                mod_stream = msf.getStream(modi.Stream)
+                moduleStream = Struct(
+                    "Symbols" / If(modi.SymbolsSize, (RestreamData(FixedSized(modi.SymbolsSize, GreedyBytes),
+                        Struct(
+                            "Signature" / Int32ul,
+                            "Records" / RepeatUntil(lambda x, lst, ctx: x._io.tell() == modi.SymbolsSize, CodeviewRecord),
+                            #"Records" / HexDump(GreedyBytes),
+                        )
+                    ))),
+                    "Lines" / If(modi.LinesSize, (RestreamData(FixedSized(modi.LinesSize, GreedyBytes),
+                        LinesSection
+                        #HexDump(GreedyBytes),
+                    ))))
+
+                mod_details = moduleStream.parse_stream(mod_stream)
+
+                symbols = toTree(list(mod_details.Symbols.Records)) if mod_details.Symbols else None
+                lines = mod_details.Lines
+            else:
+                symbols = None
+                lines = None
+
+            self.modules.append((modi, sources, contribs, symbols, lines))
+
+        elapsed = int((time.time() - now) * 1000)
+        print(f"done, {elapsed} ms", file=sys.stderr)
+
+        f.close()
 
 if __name__ == "__main__":
     import sys
