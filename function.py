@@ -28,6 +28,13 @@ class VarArgs:
     def __repr__(self):
         return "VarArgs(...)"
 
+class FakeReturn:
+    def __init__(self, s):
+        self.s = s
+
+    def typestr(self):
+        return self.s
+
 class Function:
     def __init__(self, program, module, cv, lines, contrib):
         self.module = module
@@ -75,9 +82,21 @@ class Function:
 
             self.ret = self.ty.rvtype.Type
         else:
+            # the type is missing. We still know all the args from codeview
             self.args = args
 
+            # but we will need to extract the return type from the mangled name
+            demangled = pydemangler.demangle(self.syms[0].Name)
+            # get everything before the function name
+            if '`' in demangled:
+                front = demangled.split(self.name.split("`")[0])[0]
+            else:
+                front = demangled.split(self.name)[0]
 
+            # filter out extra stuff
+            extra = ("public:", "private:", "protected:", "__thiscall", "__cdecl", "virtual", "static")
+            ret = " ".join([x for x in front.split(" ") if x not in extra])
+            self.ret = FakeReturn(ret)
 
     def data(self):
         contrib, offset = self.contrib
@@ -99,12 +118,6 @@ class Function:
         return lines
 
     def sig(self):
-        if self.ty is None:
-            if self.syms:
-                #breakpoint()
-                print(f"Function {self.name} has no type, but has a symbol: {self.syms[0].Name}")
-                return pydemangler.demangle(self.syms[0].Name)
-            return f"UNKNOWN_SIG void {self.name}(/* no symbols */)"
         args = [arg.as_code() for arg in self.args]
 
         return f"{self.ret.typestr()} {self.name}({', '.join(args)})"
