@@ -108,12 +108,12 @@ class Function:
 
         lines = []
         for (start, line), (end, _) in pairwise(chain(self.lines.items(), [(self.length+1, None)])):
-            insts = x86.disassemble(data[start:end], self.address + start)
+            addr = self.address + start
+            size = end - start
+
+            insts = x86.disassemble(data[start:end], addr)
             inst = insts[0]
-            s = ""
-            for inst in insts:
-                s += f"      {inst.ip32:08x}    {inst}\n"
-            lines.append((line, s))
+            lines.append((line, addr, size, insts))
 
         return lines
 
@@ -126,12 +126,94 @@ class Function:
         s = f"// FUNCTION: {self.p.exename} 0x{self.address:08x}\n"
 
         s += f"{self.sig()} {{\n"
-        for line, asm in self.disassemble():
-            s += f"// LINE {line:d}:\n\tasm( \n"
+        p = self.p
 
-            for asm_line in asm.split("\n")[:-1]:
-                s += f"\"\t{asm_line}\"\n"
+        inserts = []
+
+        def Foo(c, inserts):
+            s = ""
+            if isinstance(c, codeview.BpRelative):
+                if c.Offset > 0:
+                    return s # skip args
+                if c.Name in ["this"]:
+                    return s
+                #print(c)
+                ty = p.types.types[c.Type]
+                s += f"\t{ty.typestr()} {c.Name};\n" # // ebp-{0-c.Offset:x}h\n"
+            elif isinstance(c, codeview.BlockStart):
+                addr = p.getAddr(c.Segment, c.Offset)
+                assert not c.Name
+                inserts += [(addr, c)]
+            elif isinstance(c, codeview.LocalData):
+                addr = p.getAddr(c.Segment, c.Offset)
+
+                if c.Type == 0 and c.Name == "":
+                    s += f"\t // Switch table at 0x{addr:08x}\n"
+                    return s
+
+                ty = p.types.types[c.Type]
+                s += f"\tstatic const {ty.typestr()} {c.Name} = {{ /* <data@0x{addr:08x}> */ }};\n"
+            elif isinstance(c, codeview.CodeLabel):
+                addr = p.getAddr(c.Segment, c.Offset)
+                assert c.Flags == 0
+                inserts += [(addr, c)]
+            elif isinstance(c, codeview.UserDefinedType):
+                ty = p.types.types[c.Type]
+                s += f"\t typedef {ty.typestr()} {c.Name};\n"
+            else:
+                print(self.name)
+                print(c)
+            return s
+
+        intro = ""
+
+        for c in self.codeview._children:
+            intro += Foo(c, inserts)
+
+        inserts = sorted(inserts, key=lambda x: x[0])
+
+        if intro:
+            s += intro + "\n"
+
+        inAsm = False
+
+        for line, addr, size, insts in self.disassemble():
+            s += f"// LINE {line:d}:\n"
+
+            for inst in insts:
+                while inserts:
+                    at, thing = inserts[0]
+                    if at == inst.ip32:
+                        inserts.pop(0)
+
+                        if inAsm:
+                            s += "\t);\n"
+                            inAsm = False
+
+                        if isinstance(thing, codeview.BlockStart):
+                            s += f"// Block start:\n"
+                            for c in thing._children:
+                                s += Foo(c, inserts)
+                            inserts += [(at + thing.Length, BlockEnd(c))]
+                            inserts = sorted(inserts, key=lambda x: x[0])
+                        elif isinstance(thing, BlockEnd):
+                            s += f"// Block end:\n"
+                        elif isinstance(thing, codeview.CodeLabel):
+                            name = thing.Name.replace("$", "_")
+                            s += f"{name}:\n"
+                            pass
+
+                    elif at < inst.ip32:
+                        breakpoint()
+                    else:
+                        break
+                if not inAsm:
+                    s += "\tasm( \n"
+                    inAsm = True
+
+                s += f"\"\t      {inst.ip32:08x}    {inst}\"\n"
             s += ");\n"
+            inAsm = False
 
         s += "}\n\n"
         return s
@@ -148,3 +230,7 @@ def find_type(p, func):
         return None
 
     return p.types.types[TI]
+
+class BlockEnd:
+    def __init__(self, block):
+        self.block = block

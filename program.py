@@ -244,6 +244,9 @@ class Program:
             self.includes[filename] = include = Include(filename)
             return include
 
+    def getAddr(self, segment, offset):
+        return self.sections[segment].va + offset
+
 class Symbols:
     def __init__(self, symbols, types):
         self.symbols = []

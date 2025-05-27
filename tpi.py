@@ -76,6 +76,9 @@ class TypeIndex(ConstructValueClass):
     def fullstr(self):
         return self.Type.fullstr()
 
+    def type_size(self):
+        return self.Type.type_size()
+
 class Bitfield(ConstructClass):
     def __str__(self):
         attrs = []
@@ -197,8 +200,8 @@ class LfModifier(TypeLeaf):
         "Type" / TypeIndex, # Modified types
     )
 
-    def __str__(self):
-        s = f"{self.Type.shortstr()}"
+    def mods(self):
+        s = ""
         if self.Attributes.unaligned:
             s = f"unaligned {s}"
         if self.Attributes.const:
@@ -207,6 +210,14 @@ class LfModifier(TypeLeaf):
             s = f"volatile {s}"
         return s
 
+    def __str__(self):
+        return f"{self.mods()}{self.Type.shortstr()}"
+
+    def typestr(self):
+        return f"{self.mods()}{self.Type.typestr()}"
+
+    def type_size(self):
+        return self.Type.type_size()
 
 @TpRec(0x0002) # LF_POINTER_16t
 class LfPointer(TypeLeaf):
@@ -382,6 +393,9 @@ class LfEnum(FrowardRef):
         "properties" / StructProperty,
         "Name" / PascalString(Int8ul, "ascii"),
     )
+
+    def type_size(self):
+        return self.utype.type_size()
 
 @TpRec(0x0008) # LF_PROCEDURE_16t
 class LfProcedure(TypeLeaf):
