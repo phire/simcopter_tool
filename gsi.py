@@ -107,48 +107,6 @@ class Visablity(Enum):
     Global = 1
     Public = 2
 
-class Symbols:
-    def __init__(self, symbols):
-        self.symbols = []
-        self.byRecOffset = {}
-        self.bySegOffset = {}
-
-        for i, rec in enumerate(symbols):
-            offset = rec._addr
-
-            # Strip the record wrapper
-            rec = rec.Data
-
-            rec.index = i
-            rec.visablity = Visablity.Unknown
-            rec.refcount = 0
-
-            self.symbols.append(rec)
-            self.byRecOffset[offset] = rec
-            try:
-                self.bySegOffset[(rec.Segment, rec.Offset)] = rec
-            except AttributeError:
-                pass
-
-
-    def fromOffset(self, offset):
-        try:
-            return self.byRecOffset[offset]
-        except KeyError:
-            return None
-
-    def fromSegmentOffset(self, segment, offset):
-        try:
-            return self.bySegOffset[(segment, offset)]
-        except KeyError:
-            return None
-
-    def __getitem__(self, index):
-        return self.symbols[index]
-
-    def __len__(self):
-        return len(self.symbols)
-
 def LoadSymbols(symbolRecordStream):
 
     symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,

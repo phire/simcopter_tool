@@ -3,6 +3,7 @@
 class BaseType:
     def __init__(self):
         self._refs = set()
+        self.symbols = []
 
     def __str__(self):
         try:

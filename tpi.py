@@ -6,6 +6,9 @@ from codeview import VarInt
 from collections import defaultdict
 
 class TypeLeaf(ConstructClass):
+    def parsed(self, ctx):
+        self.symbols = []
+
     def linkTIs(self, tpi, history=set()):
         if self._addr in history:
             return

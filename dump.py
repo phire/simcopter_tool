@@ -90,7 +90,7 @@ def dump(p: Program, dest: str):
         with open(filename, "w") as f:
             for func in funcs:
                 f.write(f"// Function in module: {func.module.name}\n")
-                dump_func(f, p, func)
+                f.write(func.as_code())
 
 
 
@@ -162,7 +162,7 @@ def dump_module(p, module, path):
                             extrafiles[func_source].append(func)
                         continue
 
-                    dump_func(f, p, func)
+                    f.write(func.as_code())
                 else:
                     sym = thing
                     if contrib.is_code():
@@ -184,19 +184,6 @@ def dump_module(p, module, path):
             dump_global(f, p, sym)
 
 
-def dump_func(f, p, func):
-    f.write(f"// FUNCTION: {p.exename} 0x{func.address:08x}\n")
-
-    f.write(f"{func_sig(p, func)} {{\n")
-    for line, asm in func.disassemble():
-        f.write(f"// LINE {line:d}:\n\tasm( \n")
-
-        for asm_line in asm.split("\n")[:-1]:
-            f.write(f"\"\t{asm_line}\"\n")
-        f.write(");\n")
-
-    f.write("}\n\n")
-
 def dump_global(f, p, sym):
     segment = p.sections[sym.Segment]
     if segment.va is None:
@@ -211,35 +198,4 @@ def dump_global(f, p, sym):
         print(f"Unknown symbol\n {sym}")
 
     f.write(f"// {sym.Name}\n")
-
-
-def symbol_sig(p, sym):
-    breakpoint()
-
-def find_type(p, func):
-    if not func.symbols:
-        return None
-
-    try:
-        TI = func.symbols.Type
-        if TI == 0:
-            return None
-    except AttributeError:
-        return None
-
-    return p.types.types[TI]
-
-def func_sig(p, func):
-    # try and find type info
-    ty = find_type(p, func)
-    if ty is None:
-        if func.sym is not None:
-            return pydemangler.demangle(func.sym.Name)
-        return f"UNKNOWN_SIG void {func.name}(/* no symbols */)"
-    args = [arg.typestr() for arg in ty.args]
-
-    return f"{ty.rvtype.Type.typestr()} {func.name}({', '.join(args)})"
-
-
-
 

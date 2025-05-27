@@ -1,10 +1,7 @@
 
-import sys, time
-
 from pdb_parser import *
 from gsi import *
-from tpi import TypeInfomation
-from coff import Executable
+from collections import defaultdict
 
 from function import Function
 
@@ -197,7 +194,7 @@ class Program:
         self.types = data.types
 
         # The symbol record stream contains all globals (and public globals)
-        self.globals = Symbols(data.symbols)
+        self.globals = Symbols(data.symbols, self.types)
 
         # the only thing we really care about from GSI and PSGI is what visibility they apply to global symbols.
         # Though in theory it might be possible to learn something about the ordering
@@ -246,3 +243,60 @@ class Program:
         except KeyError:
             self.includes[filename] = include = Include(filename)
             return include
+
+class Symbols:
+    def __init__(self, symbols, types):
+        self.symbols = []
+        self.byRecOffset = {}
+        self.bySegOffset = defaultdict(list)
+
+        for i, rec in enumerate(symbols):
+            offset = rec._addr
+
+            # Strip the record wrapper
+            rec = rec.Data
+
+            rec.index = i
+            rec.visablity = Visablity.Unknown
+            rec.refcount = 0
+
+            self.symbols.append(rec)
+            self.byRecOffset[offset] = rec
+
+            try:
+                self.bySegOffset[(rec.Segment, rec.Offset)].append(rec)
+            except AttributeError:
+                if isinstance(rec, UserDefinedType):
+                    pass
+                elif not isinstance(rec, (Constant, ProcRef, LocalProcRef)):
+                    # Todo: work out what these proc refs are
+                    print(rec)
+                    breakpoint()
+
+            # Link symbol with type
+            try:
+                ty = rec.Type
+                types.types[ty].symbols.append(rec)
+            except AttributeError:
+                pass
+
+
+
+
+    def fromOffset(self, offset):
+        try:
+            return self.byRecOffset[offset]
+        except KeyError:
+            return None
+
+    def fromSegmentOffset(self, segment, offset):
+        try:
+            return self.bySegOffset[(segment, offset)]
+        except KeyError:
+            return None
+
+    def __getitem__(self, index):
+        return self.symbols[index]
+
+    def __len__(self):
+        return len(self.symbols)
