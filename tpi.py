@@ -1,5 +1,6 @@
 
 from construct import *
+from base_types import cast_access
 from constructutils import *
 
 from codeview import VarInt
@@ -9,25 +10,33 @@ class TypeLeaf(ConstructClass):
     def parsed(self, ctx):
         self.symbols = []
 
-    def linkTIs(self, tpi, history=set()):
-        if self._addr in history:
+    def linkTIs(self, other, tpi, history=set()):
+        if id(self) in history:
             return
-        history.add(self._addr)
+        history.add(id(self))
         for k, lf in self.items():
             if k.startswith("_"):
                 continue
             if isinstance(lf, TypeIndex):
-                lf.link(tpi)
+                lf.link(self, tpi)
             elif isinstance(lf, ListContainer) or isinstance(lf, list):
                 for item in lf:
                     if isinstance(item, TypeLeaf):
-                        item.linkTIs(tpi, history)
+                        item.TI = self.TI
+                        item.linkTIs(other, tpi, history)
 
     def addRef(self, ref):
+        if not ref:
+            return
+        if isinstance(ref, TypeIndex):
+            TI = ref.value
+        else:
+            TI = ref.TI
         try:
-            self._refs.append(ref)
+            self._refs.add(TI)
         except AttributeError:
-            self._refs = [ref]
+            self._refs = set()
+            self._refs.add(TI)
 
     def shortstr(self):
         return self.__str__()
@@ -41,13 +50,18 @@ class TypeLeaf(ConstructClass):
     def type_size(self):
         raise NotImplementedError(f"{self.__class__.__name__} does not implement type_size()")
 
+    def access(self, prefix, offset, size):
+        if offset == 0 and not size or size == self.type_size():
+            return prefix
+
+        return cast_access(self, prefix, offset, size)
 
 class TypeIndex(ConstructValueClass):
     subcon = Int16ul
 
-    def link(self, tpi):
+    def link(self, other, tpi):
         self.Type = tpi.types[self.value]
-        self.Type.addRef(self)
+        self.Type.addRef(other)
 
     def __str__(self):
         ty = getattr(self, "Type", None)
@@ -78,6 +92,9 @@ class TypeIndex(ConstructValueClass):
 
     def type_size(self):
         return self.Type.type_size()
+
+    def access(self, prefix, offset, size):
+        return self.Type.access(prefix, offset, size)
 
 class Bitfield(ConstructClass):
     def __str__(self):
@@ -219,6 +236,9 @@ class LfModifier(TypeLeaf):
     def type_size(self):
         return self.Type.type_size()
 
+    def access(self, prefix, offset, size):
+        return self.Type.access(prefix, offset, size)
+
 @TpRec(0x0002) # LF_POINTER_16t
 class LfPointer(TypeLeaf):
     subcon = Struct(
@@ -291,6 +311,22 @@ class LfPointer(TypeLeaf):
                 s = f"{self.Attributes.ptrmode} to: {self.Type.typestr()}"
         return self.attributes() + s
 
+    def type_size(self):
+        assert self.Attributes.ptrtype in ("PtrNear32"), self.Attributes.ptrtype
+        return 4
+
+    def access(self, prefix, offset, size):
+        if offset:
+            match self.Attributes.ptrmode:
+                case "Ptr":
+                    prefix += "->"
+                case "Ref":
+                    #prefix += "."
+                    pass
+                case _:
+                    raise NotImplementedError(f"Access not implemented for {self.Attributes.ptrmode}")
+            return self.Type.access(prefix, offset, size)
+        return prefix
 
 
 @TpRec(0x0003) # LF_ARRAY_16t
@@ -316,9 +352,22 @@ class LfArray(TypeLeaf):
     def type_size(self):
         return self.Size.value
 
+    def access(self, prefix, offset, size):
+        element_size = self.Type.type_size()
+        element = offset // element_size
+
+        if self.Size.value != 0:
+            assert not size or offset + size <= self.Size.value, "Array access out of bounds"
+
+        var_off = offset - element * element_size
+        prefix = f"{prefix}[{element}]"
+        return self.Type.access(prefix, var_off, size)
+
+
+
 class FrowardRef(TypeLeaf):
-    def linkTIs(self, tpi):
-        TypeLeaf.linkTIs(self, tpi)
+    def linkTIs(self, other, tpi):
+        TypeLeaf.linkTIs(self, other, tpi)
         if self.properties.fwdref:
             for ty in tpi.byName[self.Name]:
                 if ty.__class__ == self.__class__ and not ty.properties.fwdref:
@@ -346,6 +395,7 @@ class FrowardRef(TypeLeaf):
         return f"{prefix} {self.Name}"
 
 
+
 @TpRec(0x0004) # LF_CLASS_16t
 class LfClass(FrowardRef):
     subcon = Struct(
@@ -366,6 +416,27 @@ class LfClass(FrowardRef):
                 raise Exception(f"Forward reference {self.Name} has no definition")
         return self.Size.value
 
+    def get_class(self):
+        if self.properties.fwdref:
+            try:
+                return self._definition.get_class()
+            except AttributeError:
+                return None
+        try:
+            return self._class
+        except AttributeError:
+            breakpoint()
+            return None
+
+    def access(self, prefix, offset, size):
+        if not prefix.endswith("->"):
+            assert not prefix.endswith(".")
+            prefix += "."
+        cls = self.get_class()
+        if cls is None:
+            return f"{prefix}<{self.Name}+0x{offset:02x}:{size}>"
+        return cls.access(prefix, offset, size)
+
 @TpRec(0x0005) # LF_STRUCTURE_16t
 class LfStruct(LfClass):
     pass
@@ -382,6 +453,10 @@ class LfUnion(FrowardRef):
 
     def type_size(self):
         return self.Size.value
+
+    def access(self, prefix, offset, size):
+        # todo: maybe we can guess which field based on offset+size?
+        return f"{prefix}<{self.Name}+0x{offset:02x}:{size}>"
 
 
 @TpRec(0x0007) # LF_ENUM_16t
@@ -407,13 +482,14 @@ class LfProcedure(TypeLeaf):
         "arglist" / TypeIndex, # type index of argument list
     )
 
-    def linkTIs(self, tpi):
-        self.rvtype.link(tpi)
+    def linkTIs(self, other, tpi):
+        self.addRef(other)
+        self.rvtype.link(self, tpi)
         if self.parmcount:
             self.args = tpi.types[self.arglist.value].args
             assert self.parmcount == len(self.args)
             for arg in self.args:
-                arg.link(tpi)
+                arg.link(self, tpi)
         else:
             self.args = []
         del self.arglist
@@ -440,15 +516,16 @@ class LfMemberFunction(TypeLeaf):
         "thisadjust" / Int32sl, # this adjuster (long because pad required anyway)
     )
 
-    def linkTIs(self, tpi):
-        self.rvtype.link(tpi)
-        self.classtype.link(tpi)
-        self._thistype.link(tpi)
+    def linkTIs(self, other, tpi):
+        self.addRef(other)
+        self.rvtype.link(self, tpi)
+        self.classtype.link(self, tpi)
+        self._thistype.link(self, tpi)
         if self.parmcount:
             self.args = tpi.types[self.arglist.value].args
             assert self.parmcount == len(self.args)
             for arg in self.args:
-                arg.link(tpi)
+                arg.link(self, tpi)
         else:
             self.args = []
         del self.arglist
@@ -482,6 +559,9 @@ class LfVtShape(TypeLeaf):
             )
         )),
     )
+
+    def shortstr(self):
+        return f"VtShape({self.count}) [{', '.join(str(x) for x in self.desc)}]"
 
 @TpRec(0x0012) # LF_VFTPATH_16t
 class LfVftPath(TypeLeaf):
@@ -522,6 +602,9 @@ class LfBitfield(TypeLeaf):
         "position" / Int8ul,
         "type" / TypeIndex,
     )
+
+    def type_size(self):
+        return self.length
 
 class MethodListEntry(TypeLeaf):
     subcon = Struct(
@@ -689,7 +772,7 @@ class TypeInfomation(ConstructClass):
 
         for ty in self.types:
             if isinstance(ty, TypeLeaf):
-                ty.linkTIs(self)
+                ty.linkTIs(None, self)
 
     def fromOffset(self, offset):
         try:

@@ -1,4 +1,11 @@
-from iced_x86 import Decoder, Mnemonic, OpKind, Register
+from iced_x86 import Decoder, Formatter, FormatterSyntax, Mnemonic, OpKind, Register, MemorySize
+
+def create_enum_dict(module):
+    return {module.__dict__[key]:key for key in module.__dict__ if isinstance(module.__dict__[key], int)}
+
+MEMSIZE_TO_STRING = create_enum_dict(MemorySize)
+REG_TO_STRING = create_enum_dict(Register)
+
 
 class SetReg:
     def __init__(self, reg, val):
@@ -9,6 +16,12 @@ class Store:
     def __init__(self, mem, val):
         self.mem = mem
         self.val = val
+
+class Copy:
+    def __init__(self, instr):
+        self.instr = instr
+        self.dst = instr.op0
+        self.src = instr.op1
 
 class Load:
     def __init__(self, mem):
@@ -63,6 +76,50 @@ def toIR(i):
 class Instruction:
     def __init__(self, instr):
         self.instr = instr
+
+
+formatter = Formatter(FormatterSyntax.MASM)
+
+def operandToStr(instr, i, scope):
+    if instr.op_kind(i) == OpKind.MEMORY and instr.memory_base == Register.EBP and instr.memory_index == Register.NONE:
+        disp = instr.memory_displacement
+        if disp > 0x7FFFFFFF:
+            disp -= 0x100000000
+        if s:= scope.stack_access(disp, memsize(instr)):
+            return s
+
+    try:
+        return formatter.format_operand(instr, i)
+    except ValueError:
+        return None
+
+def toStr(instr, scope):
+    s = formatter.format_mnemonic(instr)
+
+    ops = [operandToStr(instr, i, scope) for i in range(instr.op_count)]
+    ops = [op for op in ops if op is not None]
+
+    if ops:
+        s += " " + formatter.format_operand_separator(instr).join(ops)
+
+    return s
+
+def memsize(instr):
+    match instr.memory_size:
+        case MemorySize.UINT8 | MemorySize.INT8:
+            return 1
+        case MemorySize.UINT16 | MemorySize.INT16:
+            return 2
+        case MemorySize.UINT32 | MemorySize.INT32 | MemorySize.FLOAT32 | MemorySize.DWORD_OFFSET:
+            return 4
+        case MemorySize.UINT64 | MemorySize.INT64 | MemorySize.FLOAT64:
+            return 8
+        case MemorySize.UNKNOWN:
+            return None
+        case _:
+            print(f"Unknown memory size: {instr.memory_size} ({MEMSIZE_TO_STRING[instr.memory_size]})")
+            breakpoint()
+            raise ValueError(f"Unknown memory size: {instr.memory_size} ({MEMSIZE_TO_STRING[instr.memory_size]})")
 
 
 def disassemble(data, addr=0):

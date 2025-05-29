@@ -2,6 +2,7 @@
 from itertools import pairwise, chain
 import base_types
 import codeview
+from intervaltree import IntervalTree
 
 import tpi
 import x86
@@ -81,6 +82,9 @@ class Function:
             #     self.args.append(Argument(None, arg))
 
             self.ret = self.ty.rvtype.Type
+
+
+
         else:
             # the type is missing. We still know all the args from codeview
             self.args = args
@@ -97,6 +101,22 @@ class Function:
             extra = ("public:", "private:", "protected:", "__thiscall", "__cdecl", "virtual", "static")
             ret = " ".join([x for x in front.split(" ") if x not in extra])
             self.ret = FakeReturn(ret)
+
+        for c in self.codeview._children:
+            if isinstance(c, codeview.BpRelative) and c.Name == "__$ReturnUdt":
+                # This is the return-value optimization.
+                # But it's sometimes missing the return type, so patch it in.
+                if c.Type == 0:
+                    # We need to find a pointer typeinfo
+                    try:
+                        class_TI = self.ret.TI
+                        _refs = self.ret._refs
+                    except AttributeError:
+                        continue
+                    types = [program.types.types[x] for x in _refs]
+                    ptr = [x for x in types if isinstance(x, tpi.LfPointer) and x.Type.value == class_TI]
+                    if ptr:
+                        c.Type = ptr[0].TI
 
     def data(self):
         contrib, offset = self.contrib
@@ -129,6 +149,8 @@ class Function:
         p = self.p
 
         inserts = []
+        scope = Scope(self.codeview, p)
+        scopes = []
 
         def Foo(c, inserts):
             s = ""
@@ -191,6 +213,9 @@ class Function:
                             inAsm = False
 
                         if isinstance(thing, codeview.BlockStart):
+                            scopes.append(scope)
+                            scope = Scope(thing, p, scope)
+
                             s += f"// Block start:\n"
                             for c in thing._children:
                                 s += Foo(c, inserts)
@@ -198,6 +223,7 @@ class Function:
                             inserts = sorted(inserts, key=lambda x: x[0])
                         elif isinstance(thing, BlockEnd):
                             s += f"// Block end:\n"
+                            scope = scopes.pop()
                         elif isinstance(thing, codeview.CodeLabel):
                             name = thing.Name.replace("$", "_")
                             s += f"{name}:\n"
@@ -211,7 +237,9 @@ class Function:
                     s += "\tasm( \n"
                     inAsm = True
 
-                s += f"\"\t      {inst.ip32:08x}    {inst}\"\n"
+                inst_str = x86.toStr(inst, scope)
+
+                s += f"\"\t      {inst.ip32:08x}    {inst_str}\"\n"
             s += ");\n"
             inAsm = False
 
@@ -234,3 +262,42 @@ def find_type(p, func):
 class BlockEnd:
     def __init__(self, block):
         self.block = block
+
+class Scope:
+
+    def __init__(self, cv, p, outer=None):
+        if outer is not None:
+            self.stack = outer.stack.copy()
+        else:
+            self.stack = IntervalTree()
+
+        def info(p, c):
+            ty = p.types.types[c.Type]
+            try:
+                size = ty.type_size()
+            except:
+                print(f"Warning: Type {ty} has no size, using 0")
+                size = 4
+            return (c.Offset, c.Offset + size, c.Name, ty)
+
+        stack = [info(p, c) for c in cv._children if isinstance(c, codeview.BpRelative)]
+        for start, end, name, ty in stack:
+            self.stack[start:end] = (name, ty)
+
+
+    def stack_access(self, offset, size):
+        var = self.stack.at(offset)
+        if not var:
+            return None
+        assert len(var) == 1
+        var = var.pop()
+
+        name, ty = var.data
+        var_off = offset - var.begin
+
+        if ty.TI == 0 and name == "__$ReturnUdt":
+            return name
+        try:
+            return ty.access(name, var_off, size)
+        except ValueError:
+            return None

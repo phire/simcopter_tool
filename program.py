@@ -4,6 +4,7 @@ from gsi import *
 from collections import defaultdict
 
 from function import Function
+from classes import parse_classes
 
 def ext(filename : str):
     try:
@@ -195,6 +196,8 @@ class Program:
 
         # The symbol record stream contains all globals (and public globals)
         self.globals = Symbols(data.symbols, self.types)
+
+        self.classes = parse_classes(self)
 
         # the only thing we really care about from GSI and PSGI is what visibility they apply to global symbols.
         # Though in theory it might be possible to learn something about the ordering

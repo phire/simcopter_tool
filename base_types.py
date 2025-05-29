@@ -1,4 +1,25 @@
 
+def cast_access(ty, prefix, offset, size):
+    match size:
+        case None:
+            return prefix
+        case 1:
+            access_type = "uint8_t"
+        case 2:
+            access_type = "uint16_t"
+        case 4:
+            access_type = "uint32_t"
+        case _:
+            raise ValueError(f"Cannot access {size} bytes at offset {offset} in {ty.typestr()}")
+
+    if offset == 0:
+        return f"reinterpret_cast<{access_type}>({prefix})"
+    elif offset + size <= ty.size:
+        # TODO: Why would the compiler even generate this in debug mode?
+        return f"*reinterpret_cast<{access_type}*>(reinterpret_cast<char*>(&{prefix}) + {offset})"
+    else:
+        raise ValueError(f"Cannot access {size} bytes at offset {offset} in {ty.typestr()}")
+
 
 class BaseType:
     def __init__(self):
@@ -18,10 +39,16 @@ class BaseType:
         return self.shortstr()
 
     def addRef(self, ref):
-        self._refs.add(ref)
+        self._refs.add(ref.TI)
 
     def type_size(self):
         return self.size
+
+    def access(self, prefix, offset, size):
+        if offset == 0 and not size or size == self.size:
+            return prefix
+
+        return cast_access(self, prefix, offset, size)
 
 # Special types
 
@@ -71,6 +98,8 @@ class _32PVOID(BaseType):
     """32 bit pointer to void"""
     TI = 0x0403
     s = "void * __ptr32"
+    size = 4
+
 class _32PFVOID(BaseType):
     """16:32 pointer to void"""
     TI = 0x0503
@@ -192,7 +221,7 @@ class Short(BaseType):
     """16 bit signed"""
     TI = 0x0011
     s = "short"
-    size = 1
+    size = 2
 
 @derive_pointers
 class UShort(BaseType):
