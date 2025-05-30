@@ -112,6 +112,8 @@ class Bitfield(ConstructClass):
                 attrs.append(k)
             elif v is not False and int(v) != 0:
                 attrs.append(str(v))
+            if k == "padding" and int(v) != 0:
+                attrs.append(f"padding({int(v)})")
         return " ".join(attrs)
 
     # Override for a slight performance improvement
@@ -150,7 +152,7 @@ class FunctionAttributies(Bitfield):
             "cxxreturnudt" / Flag, # C++ style return UDT
             "ctor" / Flag, # constructor
             "ctorvbase" / Flag, # constructor with virtual base
-            Padding(5),
+            "padding" / BitsInteger(5),
         )
     )
 
@@ -186,7 +188,7 @@ class FieldAttributes(Bitfield):
                 protected=2,
                 public=3
             ),
-            Padding(6),
+            "padding" / BitsInteger(6), # padding bits
             "sealed" / Flag, # method can't be overridden
             "compgenx" / Flag, # doesn't exist, compiler generated function
         )
@@ -516,7 +518,7 @@ class LfMemberFunction(TypeLeaf):
     subcon = Struct( # struct lfMFunc_16t
         "rvtype" / TypeIndex, # type index of return value
         "classtype" / TypeIndex, # type index of containing class
-        "_thistype" / TypeIndex, # type index of this pointer (model specific)
+        "thistype" / TypeIndex, # type index of this pointer (model specific)
         "calltype" / CallingConvention, # calling convention (call_t)
         "funcattr" / FunctionAttributies, # attributes
         "parmcount" / Int16ul, # number of parameters
@@ -528,7 +530,7 @@ class LfMemberFunction(TypeLeaf):
         self.addRef(other)
         self.rvtype.link(self, tpi)
         self.classtype.link(self, tpi)
-        self._thistype.link(self, tpi)
+        self.thistype.link(self, tpi)
         if self.parmcount:
             self.args = tpi.types[self.arglist.value].args
             assert self.parmcount == len(self.args)
@@ -733,8 +735,9 @@ class TypeRecord(ConstructClass):
         #print(f"{self._io.tell():x}")
         if self.Type not in TpSwitch:
             print(f"Unknown leaf type: {self.Type:04x} {self.Data}")
+            breakpoint()
 
-            #exit(0)
+
 
 class TypeInfomation(ConstructClass):
     """

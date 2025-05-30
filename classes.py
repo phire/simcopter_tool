@@ -5,11 +5,10 @@ import textwrap
 from intervaltree import IntervalTree
 
 def process_methods(c, methods, p, base=None):
-    # todo: these methodlists are (sometimes?) shared by multiple classes
     for method in methods.methodList.Type.Data:
         if method.index.value == 0:
             # TODO: is this the new constructor?
-            #print("NoType method found in ", c.name)
+            #print(f"NoType method found for {c.name}::{methods.Name}")
             continue
         if not isinstance(method.index.Type, tpi.LfMemberFunction):
             print("Unknown method type", method.index.Type.__class__)
@@ -17,20 +16,25 @@ def process_methods(c, methods, p, base=None):
             continue
         mbr = MemberFunction(method, p)
 
-        method.index.Type.classtype.Type._def_class = base
-        mbr.name = c.name
+        if base == c:
+            method.index.Type.classtype.Type._def_class = base
+        mbr.name = methods.Name
         c.fields += [mbr]
 
 
 def process_field(field, c, p, base_offset=0, base=None):
+    inherriting = c == base
     match field.__class__:
+
+        case tpi.LfMethod:
+            # We get a LfMethod when function overloading results in multiple methods with the same name.
+            process_methods(c, field, p, base)
         case tpi.LfOneMethod:
+            # otherwise we get a LfOneMethod, which is a single method.
             c.fields.append(Method(field, p))
 
-            field.index.Type.classtype.Type._def_class = base
-        case tpi.LfMethod:
-            # TODO: work out the difference is between LfMethod and LfOneMethod
-            process_methods(c, field, p, base)
+            if base == c:
+                field.index.Type.classtype.Type._def_class = base
 
         case tpi.LfMember:
             size = field.index.type_size()
@@ -331,6 +335,9 @@ class MemberFunction(Method):
     # I think member functions are constructors???
     def __init__(self, method, p):
         super().__init__(method, p)
+        self.conversion = self.func.rvtype.value != base_types.Void.TI
+        self.ctor = self.func.rvtype.value == base_types.Void.TI
+
 
 class Nested(Field):
     def __init__(self, field, c, p):
