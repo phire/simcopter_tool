@@ -79,28 +79,32 @@ class Instruction:
 
 
 formatter = Formatter(FormatterSyntax.MASM)
+formatter.hex_prefix = "0x"
+formatter.hex_suffix = ""
+formatter.space_after_operand_separator = True
+
 
 def operandToStr(instr, i, scope):
-    if instr.op_kind(i) == OpKind.MEMORY and instr.memory_base == Register.EBP and instr.memory_index == Register.NONE:
+    op = formatter.get_instruction_operand(instr, i)
+    if op is None:
+        return formatter.format_operand(instr, i)
+
+    if instr.op_kind(op) == OpKind.MEMORY and instr.memory_base == Register.EBP and instr.memory_index == Register.NONE:
         disp = instr.memory_displacement
         if disp > 0x7FFFFFFF:
             disp -= 0x100000000
         if s:= scope.stack_access(disp, memsize(instr)):
             return s
 
-    try:
-        return formatter.format_operand(instr, i)
-    except ValueError:
-        return None
+    return formatter.format_operand(instr, i)
 
 def toStr(instr, scope):
     s = formatter.format_mnemonic(instr)
 
-    ops = [operandToStr(instr, i, scope) for i in range(instr.op_count)]
-    ops = [op for op in ops if op is not None]
+    ops = [operandToStr(instr, i, scope) for i in range(formatter.operand_count(instr))]
 
     if ops:
-        s += " " + formatter.format_operand_separator(instr).join(ops)
+        s = f"{s:6} {formatter.format_operand_separator(instr).join(ops)}"
 
     return s
 

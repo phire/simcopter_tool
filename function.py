@@ -197,8 +197,6 @@ class Function:
         if intro:
             s += intro + "\n"
 
-        inAsm = False
-
         for line, addr, size, insts in self.disassemble():
             s += f"// LINE {line:d}:\n"
 
@@ -207,10 +205,6 @@ class Function:
                     at, thing = inserts[0]
                     if at == inst.ip32:
                         inserts.pop(0)
-
-                        if inAsm:
-                            s += "\t);\n"
-                            inAsm = False
 
                         if isinstance(thing, codeview.BlockStart):
                             scopes.append(scope)
@@ -233,15 +227,10 @@ class Function:
                         breakpoint()
                     else:
                         break
-                if not inAsm:
-                    s += "\tasm( \n"
-                    inAsm = True
 
                 inst_str = x86.toStr(inst, scope)
 
-                s += f"\"\t      {inst.ip32:08x}    {inst_str}\"\n"
-            s += ");\n"
-            inAsm = False
+                s += f"\t__asm        {inst_str};\n"
 
         s += "}\n\n"
         return s
@@ -264,7 +253,6 @@ class BlockEnd:
         self.block = block
 
 class Scope:
-
     def __init__(self, cv, p, outer=None):
         if outer is not None:
             self.stack = outer.stack.copy()
