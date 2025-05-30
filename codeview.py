@@ -175,9 +175,15 @@ class ProcSym(TreeNode, ConstructClass):
 class LocalProcedureStart(ProcSym):
     pass
 
+    def isLocal(self):
+        return True
+
 @CVRec(0x205) # S_GPROC32_16t
 class GlobalProcedureStart(ProcSym):
     pass
+
+    def isLocal(self):
+        return False
 
 @CVRec(0x206) # S_THUNK32
 class Thunk(TreeNode, ConstructClass):

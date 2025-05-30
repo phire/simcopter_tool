@@ -4,7 +4,7 @@ import base_types
 import textwrap
 from intervaltree import IntervalTree
 
-def process_methods(c, methods, p):
+def process_methods(c, methods, p, base=None):
     # todo: these methodlists are (sometimes?) shared by multiple classes
     for method in methods.methodList.Type.Data:
         if method.index.value == 0:
@@ -16,17 +16,22 @@ def process_methods(c, methods, p):
             breakpoint()
             continue
         mbr = MemberFunction(method, p)
+
+        method.index.Type.classtype.Type._def_class = base
         mbr.name = c.name
         c.fields += [mbr]
 
 
-def process_field(field, c, p, base_offset=0):
+def process_field(field, c, p, base_offset=0, base=None):
     match field.__class__:
         case tpi.LfOneMethod:
             c.fields.append(Method(field, p))
+
+            field.index.Type.classtype.Type._def_class = base
         case tpi.LfMethod:
             # TODO: work out the difference is between LfMethod and LfOneMethod
-            process_methods(c, field, p)
+            process_methods(c, field, p, base)
+
         case tpi.LfMember:
             size = field.index.type_size()
 
@@ -41,13 +46,13 @@ def process_field(field, c, p, base_offset=0):
         case tpi.LfStaticMember:
             c.fields.append(StaticMember(field, p))
         case tpi.LfBaseClass:
-            base = BaseRef(field, p)
-            base.inherrit_fields(base_offset, c, p)
+            bbase = BaseRef(field, p)
+            bbase.inherrit_fields(base_offset, c, p)
 
-            c.base += [base]
+            c.base += [bbase]
         case tpi.LfVirtualBaseClass | tpi.LfIndirectVirtualBaseClass:
-            base = BaseRef(field, p)
-            c.base += [base]
+            bbase = BaseRef(field, p)
+            c.base += [bbase]
 
             m = VirtualBase(field, p)
             size = 4
@@ -60,7 +65,8 @@ def process_field(field, c, p, base_offset=0):
             c.offset = m.offset + size
             c.fields.append(m)
         case tpi.LfNestedType:
-            c.fields.append(Nested(field, p))
+            if c == base:
+                c.fields.append(Nested(field, c, p))
 
         case tpi.LfVFuncTab:
             # ptr to vtable
@@ -105,7 +111,7 @@ class Class:
         self.base_offset = 0
 
         for field in impl.fieldList.Type.Data:
-            process_field(field, self, p)
+            process_field(field, self, p, 0, base=self)
 
         if self.offset == 0:
             self.offset = 1
@@ -118,6 +124,9 @@ class Class:
         #         print(f"{m.begin:02x}-{m.end:02x} : {m.data.ty.typestr()} {m.data.name}")
         #     if self.name not in ["ostream_withassign"]:
         #         breakpoint()
+
+    def __repr__(self):
+        return f"<Class {self.name} size={self.size} fwdref={self.fwdref}>"
 
     def print_fields(self):
         for m in sorted(self.members):
@@ -227,7 +236,7 @@ class BaseRef:
 
         assert not self.virtual
         for field in self.ty.fieldList.Type.Data:
-            process_field(field, c, p, self.offset + offset)
+            process_field(field, c, p, self.offset + offset, base=self)
 
         #c.base_offset = c.offset
 
@@ -265,7 +274,7 @@ class Member(Field):
 
     def as_code(self):
         c = self.attr_as_code()
-        c += f"{self.ty.shortstr()} {self.name};\n"
+        c += f"{self.ty.typestr()} {self.name};\n"
         return c
 
     def access_field(self, prefix, offset, size):
@@ -277,13 +286,13 @@ class StaticMember(Field):
 
     def as_code(self):
         c = self.attr_as_code()
-        c += f"static {self.ty.shortstr()} {self.name};\n"
+        c += f"static {self.ty.typestr()} {self.name};\n"
         return c
 
 def args_as_code(f):
     args = []
     for arg in f:
-        args += [arg.shortstr()]
+        args += [arg.typestr()]
 
     return ", ".join(args)
 
@@ -314,7 +323,7 @@ class Method(Field):
         if self.attr.mprop != "vanilla":
             c += f"{self.attr.mprop} "
 
-        c += f"{self.func.rvtype.shortstr()} {self.name}({args});\n"
+        c += f"{self.func.rvtype.typestr()} {self.name}({args});\n"
         return c
 
 
@@ -324,14 +333,57 @@ class MemberFunction(Method):
         super().__init__(method, p)
 
 class Nested(Field):
-    def __init__(self, field, p):
+    def __init__(self, field, c, p):
         self.name = field.Name
         self.ty = field.index.Type
         self.access = None
         self.attr = None
+        self.parent = c
 
     def as_code(self):
-        return f"todo: Nested {self.name} {self.ty.Name};\n"
+        try:
+            nested = self.ty.properties.isnested
+            if not self.ty.Name.startswith(self.parent.name + "::"):
+                nested = False
+        except AttributeError:
+            nested = False
+
+        if nested:
+            ty = self.ty
+            s = ""
+            if ty.properties.fwdref:
+                s = "// (forward reference)"
+                new_ty = ty._definition
+                if hasattr(ty, '_def_class'):
+                    ty = ty._def_class.impl
+                else:
+                    ty = new_ty
+                # match self.ty.__class__:
+                #     case tpi.LfClass:
+                #         return f"class {self.name};\n"
+                #     case tpi.LfStruct:
+                #         return f"struct {self.name};\n"
+                #     case _:
+                #         print(f"Unknown nested type: {self.ty.__class__}")
+                #         breakpoint()
+            if isinstance(ty, tpi.LfClass):
+                return ty._class.as_code()
+            elif isinstance(ty, tpi.LfEnum):
+                attr = "public"
+                s = "\tenum " + self.name + " {\n"
+                for e in self.ty.fieldList.Type.Data:
+                    if e.attr.access != attr:
+                        s += f"\t//{e.attr.access}\n"
+                        attr = e.attr.access
+                    s += f"\t\t{e.Name} = {e.value.value},\n"
+                s += "\t};\n"
+                return s
+            else:
+                return f"// TODO: Unknown nested type: {self.ty.__class__}\n// {ty.typestr()} {self.name}{s}\n"
+
+        # if not nested, this is a using statement
+        return f"using {self.name} = {self.ty.typestr()};\n"
+        return f"// todo: Nested {self.name} {self.ty.typestr()};\n"
 
 
 class VirtualBase(Member):

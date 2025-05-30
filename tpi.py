@@ -56,6 +56,12 @@ class TypeLeaf(ConstructClass):
 
         return cast_access(self, prefix, offset, size)
 
+    def __hash__(self):
+        return hash(self.TI)
+
+    def is_fwdref(self):
+        return False
+
 class TypeIndex(ConstructValueClass):
     subcon = Int16ul
 
@@ -395,6 +401,9 @@ class FrowardRef(TypeLeaf):
         return f"{prefix} {self.Name}"
 
 
+    def is_fwdref(self):
+        return self.properties.fwdref
+
 
 @TpRec(0x0004) # LF_CLASS_16t
 class LfClass(FrowardRef):
@@ -496,7 +505,6 @@ class LfProcedure(TypeLeaf):
         del self.parmcount
 
     def shortstr(self):
-        breakpoint()
         s = f"{self.rvtype} ("
         for arg in self.args:
             s += f"{arg}, "

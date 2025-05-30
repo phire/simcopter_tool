@@ -8,10 +8,24 @@ import tpi
 import x86
 import pydemangler
 
+from enum import Enum
+
+class TypeUsage(Enum):
+    Unknown = 0
+    Argument = 1
+    Return = 2
+    Local = 3
+    LocalStatic = 4
+    GlobalData = 5
+    Call = 6
+    MemberImpl = 7
+
+
 class Argument:
-    def __init__(self, name, ty):
+    def __init__(self, name, ty, offset):
         self.name = name
         self.ty = ty
+        self.offset = offset
 
     def as_code(self):
         if self.name:
@@ -19,7 +33,36 @@ class Argument:
         return self.ty.typestr()
 
     def __repr__(self):
-        return f"Argument({self.as_code()})"
+        return f"Argument({self.as_code()}, {self.offset:#x})"
+
+class LocalVar:
+    def __init__(self, name, ty, offset):
+        self.name = name
+        self.ty = ty
+        self.offset = offset
+
+    def as_code(self):
+        if self.name:
+            return f"{self.ty.typestr()} {self.name}"
+        return self.ty.typestr()
+
+    def __repr__(self):
+        return f"LocalVar({self.as_code()}, {self.offset:#x})"
+
+class LocalData:
+    def __init__(self, name, ty, address):
+        self.name = name
+        self.ty = ty
+        self.address = address
+
+    def as_code(self):
+        if self.name:
+            return f"static const {self.ty.typestr()} {self.name}"
+        return f"static const {self.ty.typestr()}"
+
+    def __repr__(self):
+        return f"LocalData({self.as_code()}, {self.offset:#x})"
+
 
 class VarArgs:
 
@@ -63,32 +106,54 @@ class Function:
         self.ty = find_type(program, self)
         self.args = []
         self.ret = None
-        args = [Argument(x.Name, program.types.types[x.Type]) for x in self.codeview._children if isinstance(x, codeview.BpRelative)
-            and x.Offset > 0 and x.Name not in ["__$ReturnUdt", "$initVBases"]]
+
+        self.args = []
+        self.local_vars = []
+
+        def HandleChild(child):
+            nonlocal self, module
+
+            match child:
+                case codeview.BpRelative():
+                    ty = program.types.types[child.Type]
+                    if child.Offset > 0 and child.Name not in ["__$ReturnUdt", "$initVBases"]:
+                        # This is an argument
+                        self.module.use_type(ty, self, TypeUsage.Argument)
+                        self.args.append(Argument(child.Name, ty, child.offsetof))
+
+                    elif child.Offset < 0:
+                        self.module.use_type(ty, self, TypeUsage.Local)
+                        self.local_vars.append(LocalVar(child.Name, ty, child.Offset))
+                    else:
+                        self.module.use_type(ty, self, TypeUsage.Unknown)
+                case codeview.BlockStart():
+                    for inner_child in child._children:
+                        HandleChild(inner_child)
+                case codeview.LocalData():
+                    ty = program.types.types[child.Type]
+                    self.module.use_type(ty, self, TypeUsage.LocalStatic)
+                    address = program.getAddr(child.Segment, child.Offset)
+                    self.local_vars.append(LocalData(child.Name, ty, address))
+
+
+        for x in self.codeview._children:
+            HandleChild(x)
+
         if self.ty:
-            if args and isinstance(self.ty, tpi.LfMemberFunction) and self.ty.calltype != tpi.CallingConvention.ThisCall and args[0].name == "this":
-                args = args[1:]  # remove 'this' pointer
+            if self.args and isinstance(self.ty, tpi.LfMemberFunction) and self.ty.calltype != tpi.CallingConvention.ThisCall and self.args[0].name == "this":
+                self.args = self.args[1:]  # remove 'this' pointer
                 print(f"Warning: Function {self.name} is a member function, but has an extra 'this' pointer in args")
             if len(self.ty.args) > 1 and self.ty.args[-1].value == 0:
-                args.append(VarArgs())  # add varargs if last arg is NoType
-            if len(args) != len(self.ty.args):
-                print(self.name)
-                print(self.ty)
-                print(self.codeview)
-                print(args)
-                breakpoint()
-            self.args = args
-            # for arg in self.ty.args:
-            #     self.args.append(Argument(None, arg))
-
+                self.args.append(VarArgs())  # add varargs if last arg is NoType
+            assert len(self.args) == len(self.ty.args)
             self.ret = self.ty.rvtype.Type
+            module.use_type(self.ret, self, TypeUsage.Return)
 
-
+            if isinstance(self.ty, tpi.LfMemberFunction):
+                module.use_type(self.ty.classtype.Type, self, TypeUsage.MemberImpl)
 
         else:
             # the type is missing. We still know all the args from codeview
-            self.args = args
-
             # but we will need to extract the return type from the mangled name
             demangled = pydemangler.demangle(self.syms[0].Name)
             # get everything before the function name
@@ -234,6 +299,9 @@ class Function:
 
         s += "}\n\n"
         return s
+
+    def __repr__(self):
+        return f"Function({self.sig()}, {self.address:#x})"
 
 def find_type(p, func):
     if not func.codeview:

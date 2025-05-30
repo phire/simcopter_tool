@@ -1,9 +1,11 @@
 
 from pdb_parser import *
 from gsi import *
+import tpi
 from collections import defaultdict
 
-from function import Function
+
+from function import Function, TypeUsage
 from classes import parse_classes
 
 def ext(filename : str):
@@ -18,6 +20,47 @@ class Include:
         self.modules = []
         self.functions = []
 
+class Usage:
+
+    def __init__(self, ty, other, mode: TypeUsage):
+        while True:
+            match ty:
+                case tpi.LfPointer():
+                    ty = ty.Type.Type
+                    mode = self.Ptr(ty, mode)
+                case tpi.LfModifier():
+                    ty = ty.Type.Type
+                    mode = self.Modifier(ty, mode)
+                case _:
+                    break
+        self.ty = ty
+        self.other = other
+        self.mode = mode
+
+
+
+    class Modifier:
+        def __init__(self, modifier_ty, mode):
+            self.modifier_ty = modifier_ty
+            self.mode = mode
+
+        def __repr__(self):
+            return f"Modifier({self.modifier_ty.typestr()}, {self.mode!r})"
+
+    class Ptr:
+        def __init__(self, ptr_ty, mode):
+            self.ptr_ty = ptr_ty
+            self.mode = mode
+
+        def __repr__(self):
+            return f"Ptr({self.ptr_ty.typestr()}, {self.mode!r})"
+
+
+    def __repr__(self):
+        return f"Usage({self.ty.typestr()}, {self.other!r} {self.mode!r})"
+
+
+
 class Module:
     # Modules are (typically) .obj files that were linked into the exe
     def __init__(self, program, library, idx, name, symbols, sources, linesInfo, contribs, globs):
@@ -28,6 +71,7 @@ class Module:
         self.globals = globs
         self.functions = {}
         self.unknowns = []
+        self.used_types = defaultdict(set)
 
         try:
             self.sourceFile = [s for s in sources if ext(s) in ('cpp', 'c', 'asm') ].pop()
@@ -106,7 +150,15 @@ class Module:
             else:
                 raise Exception(f"Unknown root symbol type {sym} in {self.name}")
 
+    def use_type(self, ty, other, mode):
+        if ty.TI == 0:
+            return
 
+        usage = Usage(ty, other, mode)
+        self.used_types[usage.ty].add(usage)
+
+    def __repr__(self):
+        return f"Module({self.name!r}, {self.sourceFile!r}, ...)"
 
 
 class Library:
@@ -162,6 +214,10 @@ class Library:
 
                 # update all existing keys
                 #self.modules = {extra + k: v for k, v in self.modules.items()}
+
+
+    def __repr__(self):
+        return f"Library({self.name!r}, {self.path!r}, {len(self.modules)} modules)"
 
 
 
@@ -238,6 +294,7 @@ class Program:
 
             self.modules.append(m)
             library.addModule(m)
+
 
 
     def getInclude(self, filename):

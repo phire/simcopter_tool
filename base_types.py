@@ -50,6 +50,9 @@ class BaseType:
 
         return cast_access(self, prefix, offset, size)
 
+    def is_fwdref(self):
+        return False
+
 # Special types
 
 class NoType(BaseType):
