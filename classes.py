@@ -111,6 +111,10 @@ class Class:
 
         self.vtable = None
         self.vtable_shape = None
+        if isinstance(impl, tpi.LfStruct):
+            self.is_struct = True
+        else:
+            self.is_struct = False
 
         if self.fwdref:
             return
@@ -148,9 +152,15 @@ class Class:
     def as_code(self):
         access = None
 
-        c = f"class {self.name}"
+        prefix = "class"
+        if self.is_struct:
+           access = "public"
+           prefix = "struct"
+
+        c = f"{prefix} {self.name}"
+
         if self.fwdref:
-            return f"class {self.name};\n"
+            return c + ";\n"
 
         bases = [f"{b.as_code()}" for b in self.base]
 
