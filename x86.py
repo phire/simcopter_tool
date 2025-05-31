@@ -84,6 +84,7 @@ formatter.hex_suffix = ""
 formatter.space_after_operand_separator = True
 
 
+
 def operandToStr(instr, i, scope):
     op = formatter.get_instruction_operand(instr, i)
     if op is None:
@@ -114,15 +115,15 @@ def memsize(instr):
             return 1
         case MemorySize.UINT16 | MemorySize.INT16:
             return 2
-        case MemorySize.UINT32 | MemorySize.INT32 | MemorySize.FLOAT32 | MemorySize.DWORD_OFFSET:
+        case MemorySize.UINT32 | MemorySize.INT32 | MemorySize.FLOAT32 | MemorySize.DWORD_OFFSET | MemorySize.SEG_PTR32:
             return 4
-        case MemorySize.UINT64 | MemorySize.INT64 | MemorySize.FLOAT64:
+        case MemorySize.UINT64 | MemorySize.INT64 | MemorySize.FLOAT64 | MemorySize.PACKED64_UINT16:
             return 8
         case MemorySize.UNKNOWN:
             return None
         case _:
             print(f"Unknown memory size: {instr.memory_size} ({MEMSIZE_TO_STRING[instr.memory_size]})")
-            breakpoint()
+            #breakpoint()
             raise ValueError(f"Unknown memory size: {instr.memory_size} ({MEMSIZE_TO_STRING[instr.memory_size]})")
 
 

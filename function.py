@@ -8,6 +8,8 @@ import tpi
 import x86
 import pydemangler
 
+from ir import *
+
 from enum import Enum
 
 class TypeUsage(Enum):
@@ -90,7 +92,13 @@ class Function:
         self.contrib = contrib
         self.p = program
 
-        self.length = cv.Len
+        if lines.get(0) is None:
+            assert lines == {}
+            lines[0] = None
+
+        lines[cv.Len] = None  # add a marker for the end of the function
+        self.lines = lines
+
         segment = program.sections[cv.Segment]
         self.address = segment.va + cv.Offset
 
@@ -184,24 +192,40 @@ class Function:
                     if ptr:
                         c.Type = ptr[0].TI
 
+        if self.contrib:
+            self.parse_body()
+
     def data(self):
         contrib, offset = self.contrib
         length = self.length
         return contrib._data[offset: offset+length]
 
+
     def disassemble(self):
         data = self.data()
 
         lines = []
-        for (start, line), (end, _) in pairwise(chain(self.lines.items(), [(self.length+1, None)])):
+        for (start, line), (end, _) in pairwise(self.lines.items()):
             addr = self.address + start
             size = end - start
 
             insts = x86.disassemble(data[start:end], addr)
-            inst = insts[0]
             lines.append((line, addr, size, insts))
 
         return lines
+
+    def parse_body(self):
+        lines = self.disassemble()
+        lines = [(no, [I.from_inst(inst) for inst in insts]) for no, _, _, insts in lines]
+        self.prolog, tail  = match_prolog(lines.pop(0))
+        if tail[1]:
+            lines.insert(0, tail)
+
+        if self.prolog:
+            head, self.epilog = match_epilog(lines.pop())
+            lines.append(head)
+        self.body = lines
+
 
     def sig(self):
         args = [arg.as_code() for arg in self.args]
@@ -263,10 +287,17 @@ class Function:
         if intro:
             s += intro + "\n"
 
-        for line, addr, size, insts in self.disassemble():
-            s += f"// LINE {line:d}:\n"
+        if not self.prolog:
+            s += "\t// Couldn't match prolog\n"
+        elif self.prolog.cleanup_fn:
+            s += f"\t// Function registers exception cleanup function at 0x{self.prolog.cleanup_fn.value:08x}\n"
+
+        for line, insts in self.body:
+            if line is not None:
+                s += f"// LINE {line:d}:\n"
 
             for inst in insts:
+                inst = inst.inst
                 while inserts:
                     at, thing = inserts[0]
                     if at == inst.ip32:
@@ -297,6 +328,9 @@ class Function:
                 inst_str = x86.toStr(inst, scope)
 
                 s += f"\t__asm        {inst_str};\n"
+
+        if self.prolog and not self.epilog:
+            s += "\t// Couldn't match epilog\n"
 
         s += "}\n\n"
         return s
@@ -358,3 +392,94 @@ class Scope:
             return ty.access(name, var_off, size)
         except ValueError:
             return None
+
+
+class Prolog:
+    def __init__(self, line, stack_adjust, this_local=None, cleanup_fn=None):
+        self.line = line
+        self.stack_adjust = stack_adjust
+        self.this_local = this_local
+        self.cleanup_fn = cleanup_fn
+
+    def __repr__(self):
+        s = f"Prolog(line={self.line}, stack_adjust={self.stack_adjust}"
+        if self.this_local is not None:
+            s += f", this={self.this_local})"
+        if self.cleanup_fn is not None:
+            s += f", cleanup_fn={self.cleanup_fn}"
+        return s + ")"
+
+def match_prolog(line):
+    line_no, insts = line
+
+    match insts:
+        case [I("push", "ebp"), I("mov", ("ebp", "esp")), *tail]:
+            pass
+        case _:
+            #breakpoint()
+            return None, line
+
+    match tail:
+        case [I("push", Const(0xffffffffffffffff)),
+              I("push", Const() as cleanup_fn),
+              I("mov", ("eax",  SegOverride("FS", MemDisp(0)))),
+              I("push", "eax"),
+              I("mov", (SegOverride("FS", MemDisp(0)), "esp")),
+              I("sub", ("esp", Const(4))),
+              *tail]:
+            pass
+        case [I("push", Const(0xffffffffffffffff)),
+              I("push", Const() as cleanup_fn),
+              I("mov", ("eax",  SegOverride("FS", MemDisp(0)))),
+              I("push", "eax"),
+              I("mov", (SegOverride("FS", MemDisp(0)), "esp")),
+              *tail]:
+            # without extra sub esp, 4
+            pass
+        case tail:
+            cleanup_fn = None
+
+    match tail:
+        case [I("sub", ("esp", Const() as stack_adjust)), *tail]:
+            pass
+        case [I("mov", ("eax", Const() as stack_adjust)), I("call", "0x0056AC60"), *tail]:
+            pass
+        case tail:
+            stack_adjust = 0
+
+    match tail:
+        case [I("push", "ebx"), I("push", "esi"), I("push", "edi"),
+              I("mov", (LocalAddr as this_local, "ecx")),
+              *tail]:
+                pass
+        case [I("push", "ebx"), I("push", "esi"), I("push", "edi"),
+              *tail]:
+                this_local = None
+        case tail:
+            return None, line
+    return Prolog(line_no, stack_adjust, this_local, cleanup_fn), (None, tail)
+
+class Epilog:
+    def __init__(self, line, stack_adjust):
+        self.line = line
+        self.stack_adjust = stack_adjust
+
+    def __repr__(self):
+        return f"Epilog(stack_adjust={self.stack_adjust})"
+
+def match_epilog(line):
+    line_no, insts = line
+
+    match insts:
+        case [*head, I("pop", "edi"), I("pop", "esi"), I("pop", "ebx"), I("leave", ()), I("ret", Const() as stack_adjust)]:
+            pass
+        case [*head,  I("pop", "edi"), I("pop", "esi"), I("pop", "ebx"), I("leave", ()), I("ret")]:
+            stack_adjust = 0
+        case head:
+            breakpoint()
+            return (line_no, head), None
+
+    return (line_no, head), Epilog(line_no, stack_adjust)
+
+
+
