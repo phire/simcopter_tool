@@ -41,7 +41,9 @@ class TypeLeaf(ConstructClass):
     def shortstr(self):
         return self.__str__()
 
-    def typestr(self):
+    def typestr(self, name=None):
+        if name:
+            return f"{self.shortstr()} {name}"
         return self.shortstr()
 
     def fullstr(self):
@@ -90,8 +92,8 @@ class TypeIndex(ConstructValueClass):
     def shortstr(self):
         return self.Type.shortstr()
 
-    def typestr(self):
-        return self.Type.typestr()
+    def typestr(self, name=None):
+        return self.Type.typestr(name)
 
     def fullstr(self):
         return self.Type.fullstr()
@@ -238,8 +240,8 @@ class LfModifier(TypeLeaf):
     def __str__(self):
         return f"{self.mods()}{self.Type.shortstr()}"
 
-    def typestr(self):
-        return f"{self.mods()}{self.Type.typestr()}"
+    def typestr(self, name=None):
+        return f"{self.mods()}{self.Type.typestr(name)}"
 
     def type_size(self):
         return self.Type.type_size()
@@ -303,19 +305,30 @@ class LfPointer(TypeLeaf):
         s = f"{self.Attributes.ptrmode} to: {self.Type.shortstr()}"
         return self.attributes() + s
 
-    def typestr(self):
+    def typestr(self, name=None):
         match self.Attributes.ptrmode:
             case "Ptr":
                 if isinstance(self.Type.Type, LfProcedure):
                     #breakpoint()
                     # Special case for function pointers
                     fn = self.Type.Type
-                    s = f"{fn.rvtype} (*)({', '.join(str(arg.typestr()) for arg in fn.args)})"
+                    if not name:
+                        name = ""
+                    s = f"{fn.rvtype.typestr()} (*{name})({', '.join(str(arg.typestr()) for arg in fn.args)})"
                 else:
-                    s = f"{self.Type.typestr()}*"
+                    if name:
+                        #name = "*" + name
+                        s = f"{self.Type.typestr()}* {name}"
+                    else:
+                        s = f"{self.Type.typestr()}*"
             case "Ref":
-                s = f"{self.Type.typestr()}&"
+                if name:
+                    #name = "&" + name
+                    s = f"{self.Type.typestr()}& {name}"
+                else:
+                    s = f"{self.Type.typestr(name)}&"
             case _:
+                breakpoint()
                 s = f"{self.Attributes.ptrmode} to: {self.Type.typestr()}"
         return self.attributes() + s
 
@@ -352,10 +365,16 @@ class LfArray(TypeLeaf):
         #assert self.IndexType.value == 17, "Array index type should be uint32_t"
 
     def shortstr(self):
+        return self.typestr()
+
+    def typestr(self, name=None):
         element_size = self.Type.Type.type_size()
         count = self.Size.value // element_size
 
-        return f"{self.Type.shortstr()}[{count}]"
+        if name:
+            name = f"{name}[{count}]"
+            return self.Type.typestr(name)
+        return f"{self.Type.typestr()}[{count}]"
 
     def type_size(self):
         return self.Size.value
@@ -512,6 +531,13 @@ class LfProcedure(TypeLeaf):
             s += f"{arg}, "
         s += ")"
         return s
+
+    def typestr(self, name=None):
+        args = ", ".join(arg.typestr() for arg in self.args)
+        if name:
+            return f"{self.rvtype.typestr()} (*{name})({args})"
+        return f"{self.rvtype.typestr()} ({args})"
+
 
 @TpRec(0x0009) # LF_MFUNCTION_16t
 class LfMemberFunction(TypeLeaf):

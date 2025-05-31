@@ -23,17 +23,17 @@ def process_methods(c, methods, p, base=None):
 
 
 def process_field(field, c, p, base_offset=0, base=None):
-    inherriting = c == base
+    inherriting = c != base
     match field.__class__:
-
         case tpi.LfMethod:
             # We get a LfMethod when function overloading results in multiple methods with the same name.
-            process_methods(c, field, p, base)
+            if not inherriting:
+                process_methods(c, field, p, base)
+
         case tpi.LfOneMethod:
             # otherwise we get a LfOneMethod, which is a single method.
-            c.fields.append(Method(field, p))
-
-            if base == c:
+            if not inherriting:
+                c.fields.append(Method(field, p))
                 field.index.Type.classtype.Type._def_class = base
 
         case tpi.LfMember:
@@ -46,14 +46,18 @@ def process_field(field, c, p, base_offset=0, base=None):
             c.members[m.offset:m.offset + size] = m
             c.offset = m.offset + size
 
-            c.fields.append(m)
+            if not inherriting:
+                c.fields.append(m)
         case tpi.LfStaticMember:
-            c.fields.append(StaticMember(field, p))
+            if not inherriting:
+                c.fields.append(StaticMember(field, p))
         case tpi.LfBaseClass:
+
             bbase = BaseRef(field, p)
             bbase.inherrit_fields(base_offset, c, p)
 
-            c.base += [bbase]
+            if not inherriting:
+                c.base += [bbase]
         case tpi.LfVirtualBaseClass | tpi.LfIndirectVirtualBaseClass:
             bbase = BaseRef(field, p)
             c.base += [bbase]
@@ -67,14 +71,19 @@ def process_field(field, c, p, base_offset=0, base=None):
                 return
             c.members[m.offset:m.offset + size] = m
             c.offset = m.offset + size
-            c.fields.append(m)
+
+            if not inherriting:
+                c.fields.append(m)
         case tpi.LfNestedType:
-            if c == base:
+            if not inherriting:
                 c.fields.append(Nested(field, c, p))
 
         case tpi.LfVFuncTab:
             # ptr to vtable
             assert isinstance(field.index.Type, tpi.LfPointer)
+            if inherriting:
+                return
+
 
             ptr_size = field.index.Type.type_size()
             vtable = field.index.Type.Type # um... wtf?
@@ -125,7 +134,7 @@ class Class:
 
         # if self.size != self.offset:
         #     for m in sorted(self.members):
-        #         print(f"{m.begin:02x}-{m.end:02x} : {m.data.ty.typestr()} {m.data.name}")
+        #         print(f"{m.begin:02x}-{m.end:02x} : {m.data.ty.typestr(m.data.name)}")
         #     if self.name not in ["ostream_withassign"]:
         #         breakpoint()
 
@@ -278,7 +287,7 @@ class Member(Field):
 
     def as_code(self):
         c = self.attr_as_code()
-        c += f"{self.ty.typestr()} {self.name};\n"
+        c += f"{self.ty.typestr(self.name)};\n"
         return c
 
     def access_field(self, prefix, offset, size):
@@ -290,7 +299,7 @@ class StaticMember(Field):
 
     def as_code(self):
         c = self.attr_as_code()
-        c += f"static {self.ty.typestr()} {self.name};\n"
+        c += f"static {self.ty.typestr(self.name)};\n"
         return c
 
 def args_as_code(f):
@@ -386,7 +395,7 @@ class Nested(Field):
                 s += "\t};\n"
                 return s
             else:
-                return f"// TODO: Unknown nested type: {self.ty.__class__}\n// {ty.typestr()} {self.name}{s}\n"
+                return f"// TODO: Unknown nested type: {self.ty.__class__}\n// {ty.typestr(self.name)}\n"
 
         # if not nested, this is a using statement
         return f"using {self.name} = {self.ty.typestr()};\n"

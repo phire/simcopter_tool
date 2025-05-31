@@ -35,8 +35,11 @@ class BaseType:
     def shortstr(self):
         return self.__str__()
 
-    def typestr(self):
-        return self.shortstr()
+    def typestr(self, name=None):
+        if name:
+            return f"{self.shortstr()} {name}"
+        else:
+            return self.shortstr()
 
     def addRef(self, ref):
         self._refs.add(ref.TI)

@@ -19,6 +19,7 @@ class TypeUsage(Enum):
     GlobalData = 5
     Call = 6
     MemberImpl = 7
+    BaseClass = 8
 
 
 class Argument:
@@ -29,7 +30,7 @@ class Argument:
 
     def as_code(self):
         if self.name:
-            return f"{self.ty.typestr()} {self.name}"
+            return f"{self.ty.typestr(self.name)}"
         return self.ty.typestr()
 
     def __repr__(self):
@@ -57,7 +58,7 @@ class LocalData:
 
     def as_code(self):
         if self.name:
-            return f"static const {self.ty.typestr()} {self.name}"
+            return f"static const {self.ty.typestr(self.name)}"
         return f"static const {self.ty.typestr()}"
 
     def __repr__(self):
@@ -76,7 +77,7 @@ class FakeReturn:
     def __init__(self, s):
         self.s = s
 
-    def typestr(self):
+    def typestr(self, name=None):
         return self.s
 
 class Function:
@@ -84,7 +85,7 @@ class Function:
         self.module = module
         self.source_file = module.sourceFile
         self.codeview = cv
-        self.lines = lines
+        self.length = cv.Len
         self.name = cv.Name
         self.contrib = contrib
         self.p = program
@@ -226,7 +227,7 @@ class Function:
                     return s
                 #print(c)
                 ty = p.types.types[c.Type]
-                s += f"\t{ty.typestr()} {c.Name};\n" # // ebp-{0-c.Offset:x}h\n"
+                s += f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
             elif isinstance(c, codeview.BlockStart):
                 addr = p.getAddr(c.Segment, c.Offset)
                 assert not c.Name
@@ -239,14 +240,14 @@ class Function:
                     return s
 
                 ty = p.types.types[c.Type]
-                s += f"\tstatic const {ty.typestr()} {c.Name} = {{ /* <data@0x{addr:08x}> */ }};\n"
+                s += f"\tstatic const {ty.typestr(c.Name)} = {{ /* <data@0x{addr:08x}> */ }};\n"
             elif isinstance(c, codeview.CodeLabel):
                 addr = p.getAddr(c.Segment, c.Offset)
                 assert c.Flags == 0
                 inserts += [(addr, c)]
             elif isinstance(c, codeview.UserDefinedType):
                 ty = p.types.types[c.Type]
-                s += f"\t typedef {ty.typestr()} {c.Name};\n"
+                s += f"\t typedef {ty.typestr(c.Name)};\n"
             else:
                 print(self.name)
                 print(c)
