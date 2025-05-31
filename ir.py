@@ -1,5 +1,7 @@
 
 
+scope = None
+
 
 class Block:
     pass
@@ -108,9 +110,16 @@ class MemComplex(Mem):
 class LocalVar(Mem):
     def __init__(self, size, displacement):
         super().__init__(size, base="EBP", displacement=displacement)
+        self.sym = scope.stack_access(displacement, size)
 
     def __repr__(self):
         return f"LocalVar({self.displacement})"
+
+    def as_code(self):
+        if not self.sym:
+            raise ValueError(f"Local variable at {self.displacement} not found in scope")
+        return f"{self.sym}"
+
 
 class SegOverride(Mem):
     __match_args__ = ("segment", "mem")
@@ -122,7 +131,27 @@ class SegOverride(Mem):
     def __repr__(self):
         return f"SegOverride(segment={self.segment}, {super().__repr__()})"
 
-from iced_x86 import OpKind, Register, MemorySize
+class FunctionRef:
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __repr__(self):
+        return f"FunctionRef({self.fn.name})"
+
+    def __eq__(self, other):
+        if isinstance(other, FunctionRef):
+            return self.fn == other.fn
+        if isinstance(other, str):
+            return self.fn.name == other
+        if isinstance(other, int):
+            return self.fn.address == other
+        return False
+
+    def as_code(self):
+       return f"{self.fn.name}"
+
+
+from iced_x86 import OpKind, Register, Mnemonic
 from x86 import formatter, REG_TO_STRING, memsize
 
 def process_operand(inst, i):
@@ -137,16 +166,29 @@ def process_operand(inst, i):
 
         case OpKind.IMMEDIATE8 | OpKind.IMMEDIATE8_2ND | OpKind.IMMEDIATE16 | OpKind.IMMEDIATE32 | OpKind.IMMEDIATE64 | OpKind.IMMEDIATE8TO16 | OpKind.IMMEDIATE8TO32 | OpKind.IMMEDIATE8TO64:
             imm = inst.immediate(op)
+            if imm > 0x7fffffffffffffff:
+                imm = imm - 0x10000000000000000
             return Const(imm)
 
-        case OpKind.NEAR_BRANCH16 | OpKind.NEAR_BRANCH32 | OpKind.NEAR_BRANCH64 | OpKind.FAR_BRANCH16 | OpKind.FAR_BRANCH32:
-            return formatter.format_operand(inst, i)
+        case OpKind.NEAR_BRANCH32:
+            addr = inst.near_branch32
+            target = scope.code_access(inst.ip32, addr)
+            if not target:
+                return formatter.format_operand(inst, i)
+
+            if target.address == addr:
+                return FunctionRef(target)
+            else:
+                offset = addr - target.address
+                return f"{target.name}+{offset:#x}"
+
 
         case OpKind.MEMORY if inst.memory_base == Register.EBP and inst.memory_segment == Register.SS and inst.memory_index == Register.NONE:
             disp = inst.memory_displacement
             if disp > 0x7FFFFFFF:
                 disp -= 0x100000000
             size = memsize(inst)
+
 
             # todo: handle indexed ebp
             assert inst.memory_index == Register.NONE
@@ -181,7 +223,7 @@ def process_operand(inst, i):
 
 
         case _:
-            breakpoint()
+            return formatter.format_operand(inst, i)
 
 
 class I:
@@ -208,3 +250,26 @@ class I:
             return f"I({self.mnenomic} {', '.join(map(str, self.operands))})"
 
         return f"I({self.mnenomic} {self.operands})"
+
+    def ops(self):
+        if isinstance(self.operands, tuple):
+            return self.operands
+        return (self.operands,)
+
+    def as_code(self):
+        ops = []
+        for i, op in enumerate(self.ops()):
+            try:
+                ops.append(op.as_code())
+            except:
+                ops.append(formatter.format_operand(self.inst, i))
+
+        if ops:
+            return f"\t__asm        {self.mnenomic:6} {", ".join(ops)};\n"
+        return f"\t__asm        {self.mnenomic};\n"
+
+
+
+def set_scope(_scope):
+    global scope
+    scope = _scope

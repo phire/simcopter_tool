@@ -1,4 +1,5 @@
 
+from collections import defaultdict
 from itertools import pairwise, chain
 import base_types
 import codeview
@@ -7,7 +8,9 @@ from intervaltree import IntervalTree
 import tpi
 import x86
 import pydemangler
+import struct
 
+import ir
 from ir import *
 
 from enum import Enum
@@ -82,6 +85,45 @@ class FakeReturn:
     def typestr(self, name=None):
         return self.s
 
+class Line:
+    def __init__(self, offset, line):
+        self.offset = offset
+        self.line = line
+
+    def __repr__(self):
+        return f"Line({self.offset:#x}, {self.line})"
+
+class SwitchTable:
+    def __init__(self, cv):
+        self.cv = cv
+
+    def __repr__(self):
+        return f"SwitchTable({self.cv.Offset:#x}, {self.cv.Length})"
+
+class SwitchPointers:
+    def __repr__(self):
+        return "SwitchPointers()"
+
+class BlockStart:
+    def __init__(self, cv):
+        self.cv = cv
+        self.offset = cv.Offset
+        self.length = cv.Length
+        self.name = cv.Name
+        self._children = cv._children
+
+    def __repr__(self):
+        return f"BlockStart({self.name}, {self.offset:#x}, {self.length})"
+
+class Label:
+    def __init__(self, cv):
+        self.name = cv.Name.replace("$", "_")
+        self.offset = cv.Offset
+        self.segment = cv.Segment
+
+    def __repr__(self):
+        return f"Label({self.name}, {self.offset:#x})"
+
 class Function:
     def __init__(self, program, module, cv, lines, contrib):
         self.module = module
@@ -118,6 +160,12 @@ class Function:
 
         self.args = []
         self.local_vars = []
+        self.prolog = None
+        self.epilog = None
+
+        self.labels = defaultdict(list)
+        for (offset, line) in lines.items():
+            self.labels[offset].append(Line(offset, line))
 
         def HandleChild(child):
             nonlocal self, module
@@ -136,13 +184,28 @@ class Function:
                     else:
                         self.module.use_type(ty, self, TypeUsage.Unknown)
                 case codeview.BlockStart():
+                    address = program.getAddr(child.Segment, child.Offset)
+                    offset = address - self.address
+                    self.labels[offset].append(BlockStart(child))
+                    self.labels[offset + child.Length].append(BlockEnd(child))
                     for inner_child in child._children:
                         HandleChild(inner_child)
                 case codeview.LocalData():
+                    address = program.getAddr(child.Segment, child.Offset)
+                    if child.Type == 0 and child.Name == "":
+                        # This is a switch table
+                        offset = address - self.address
+                        self.labels[offset].append(SwitchTable(child))
+
+                        return
                     ty = program.types.types[child.Type]
                     self.module.use_type(ty, self, TypeUsage.LocalStatic)
-                    address = program.getAddr(child.Segment, child.Offset)
                     self.local_vars.append(LocalData(child.Name, ty, address))
+
+                case codeview.CodeLabel():
+                    address = program.getAddr(child.Segment, child.Offset)
+                    offset = address - self.address
+                    self.labels[offset].append(Label(child))
 
 
         for x in self.codeview._children:
@@ -192,6 +255,8 @@ class Function:
                     if ptr:
                         c.Type = ptr[0].TI
 
+
+    def post_process(self):
         if self.contrib:
             self.parse_body()
 
@@ -204,19 +269,62 @@ class Function:
     def disassemble(self):
         data = self.data()
 
+        labels = sorted(self.labels.items(), key=lambda x: x[0])
+
         lines = []
-        for (start, line), (end, _) in pairwise(self.lines.items()):
+        for (start, label), (end, _) in pairwise(labels):
             addr = self.address + start
             size = end - start
 
-            insts = x86.disassemble(data[start:end], addr)
-            lines.append((line, addr, size, insts))
+            insts = []
+            for inst in x86.disassemble(data[start:end], addr):
+                insts.append(inst)
+                if inst.mnemonic == x86.Mnemonic.JMP and inst.op_kind(0) == x86.OpKind.MEMORY:
+                    addr = inst.memory_displacement
+                    if addr > self.address and addr < self.address + self.length:
+                        lines.append((label, addr, size, insts))
+                        start = inst.next_ip32 - self.address
+                        insts = data[start:end]
+                        label = [SwitchPointers()]
+                        break
+                    else:
+                        breakpoint()
+
+
+            lines.append((label, addr, size, insts))
 
         return lines
 
+
+
     def parse_body(self):
-        lines = self.disassemble()
-        lines = [(no, [I.from_inst(inst) for inst in insts]) for no, _, _, insts in lines]
+        scopes = []
+        scope = Scope(self.codeview, self.p, self)
+        ir.set_scope(scope)
+
+        raw_lines = self.disassemble()
+        lines = []
+        for labels, addr, size, insts in raw_lines:
+            skip = False
+            for label in labels:
+                if isinstance(label, BlockStart):
+                    scopes.append(scope)
+                    scope = Scope(label.cv, self.p, self, scope)
+                    ir.set_scope(scope)
+                elif isinstance(label, BlockEnd):
+                    scope = scopes.pop()
+                    ir.set_scope(scope)
+                elif isinstance(label, SwitchPointers):
+                    # the pointers in a switch table
+                    skip = True
+                elif isinstance(label, SwitchTable):
+                    # the indexes into the pointers
+                    skip = True
+
+            if not skip:
+                insts = [I.from_inst(inst) for inst in insts]
+            lines.append((labels, insts))
+
         self.prolog, tail  = match_prolog(lines.pop(0))
         if tail[1]:
             lines.insert(0, tail)
@@ -239,7 +347,7 @@ class Function:
         p = self.p
 
         inserts = []
-        scope = Scope(self.codeview, p)
+        scope = Scope(self.codeview, p, self)
         scopes = []
 
         def Foo(c, inserts):
@@ -255,7 +363,7 @@ class Function:
             elif isinstance(c, codeview.BlockStart):
                 addr = p.getAddr(c.Segment, c.Offset)
                 assert not c.Name
-                inserts += [(addr, c)]
+                #inserts += [(addr, c)]
             elif isinstance(c, codeview.LocalData):
                 addr = p.getAddr(c.Segment, c.Offset)
 
@@ -268,7 +376,7 @@ class Function:
             elif isinstance(c, codeview.CodeLabel):
                 addr = p.getAddr(c.Segment, c.Offset)
                 assert c.Flags == 0
-                inserts += [(addr, c)]
+                #inserts += [(addr, c)]
             elif isinstance(c, codeview.UserDefinedType):
                 ty = p.types.types[c.Type]
                 s += f"\t typedef {ty.typestr(c.Name)};\n"
@@ -292,42 +400,36 @@ class Function:
         elif self.prolog.cleanup_fn:
             s += f"\t// Function registers exception cleanup function at 0x{self.prolog.cleanup_fn.value:08x}\n"
 
-        for line, insts in self.body:
-            if line is not None:
-                s += f"// LINE {line:d}:\n"
+        try:
+            body = self.body
+        except:
+            body = []
+
+        for labels, insts in body:
+            skip = False
+            for label in labels:
+                if isinstance(label, BlockStart):
+                    s += f"// Block start:\n"
+                    for c in label.cv._children:
+                        s += Foo(c, inserts)
+                if isinstance(label, BlockEnd):
+                    s += f"// Block end:\n"
+                if isinstance(label, Label):
+                    s += f"{label.name}:\n"
+                if isinstance(label, SwitchPointers):
+                    s += f"// Switch pointers\n"
+                    skip = True
+                if isinstance(label, SwitchTable):
+                    s += f"// Switch table\n"
+                    skip = True
+                if isinstance(label, Line):
+                    s += f"// LINE {label.line:d}:\n"
+
+            if skip:
+                continue
 
             for inst in insts:
-                inst = inst.inst
-                while inserts:
-                    at, thing = inserts[0]
-                    if at == inst.ip32:
-                        inserts.pop(0)
-
-                        if isinstance(thing, codeview.BlockStart):
-                            scopes.append(scope)
-                            scope = Scope(thing, p, scope)
-
-                            s += f"// Block start:\n"
-                            for c in thing._children:
-                                s += Foo(c, inserts)
-                            inserts += [(at + thing.Length, BlockEnd(c))]
-                            inserts = sorted(inserts, key=lambda x: x[0])
-                        elif isinstance(thing, BlockEnd):
-                            s += f"// Block end:\n"
-                            scope = scopes.pop()
-                        elif isinstance(thing, codeview.CodeLabel):
-                            name = thing.Name.replace("$", "_")
-                            s += f"{name}:\n"
-                            pass
-
-                    elif at < inst.ip32:
-                        breakpoint()
-                    else:
-                        break
-
-                inst_str = x86.toStr(inst, scope)
-
-                s += f"\t__asm        {inst_str};\n"
+                s += inst.as_code()
 
         if self.prolog and not self.epilog:
             s += "\t// Couldn't match epilog\n"
@@ -356,7 +458,7 @@ class BlockEnd:
         self.block = block
 
 class Scope:
-    def __init__(self, cv, p, outer=None):
+    def __init__(self, cv, p, fn, outer=None):
         if outer is not None:
             self.stack = outer.stack.copy()
         else:
@@ -367,13 +469,18 @@ class Scope:
             try:
                 size = ty.type_size()
             except:
-                print(f"Warning: Type {ty} has no size, using 0")
+                size = 0
+            if not size:
+                print(f"Warning: Type {ty} has no size, using 4")
                 size = 4
             return (c.Offset, c.Offset + size, c.Name, ty)
 
         stack = [info(p, c) for c in cv._children if isinstance(c, codeview.BpRelative)]
         for start, end, name, ty in stack:
             self.stack[start:end] = (name, ty)
+
+        self.fn = fn
+        self.p = p
 
 
     def stack_access(self, offset, size):
@@ -392,6 +499,21 @@ class Scope:
             return ty.access(name, var_off, size)
         except ValueError:
             return None
+
+    def data_access(self, addr, size):
+        pass
+
+    def code_access(self, pc, addr):
+        if addr >= self.fn.address and addr < self.fn.address + self.fn.length:
+            # within current function
+            return None
+
+        fn = self.p.getItem(addr)
+        if isinstance(fn, Function):
+            return fn
+
+        pass
+
 
 
 class Prolog:
@@ -420,7 +542,7 @@ def match_prolog(line):
             return None, line
 
     match tail:
-        case [I("push", Const(0xffffffffffffffff)),
+        case [I("push", Const(-1)),
               I("push", Const() as cleanup_fn),
               I("mov", ("eax",  SegOverride("FS", MemDisp(0)))),
               I("push", "eax"),
@@ -428,7 +550,7 @@ def match_prolog(line):
               I("sub", ("esp", Const(4))),
               *tail]:
             pass
-        case [I("push", Const(0xffffffffffffffff)),
+        case [I("push", Const(-1)),
               I("push", Const() as cleanup_fn),
               I("mov", ("eax",  SegOverride("FS", MemDisp(0)))),
               I("push", "eax"),
@@ -442,7 +564,7 @@ def match_prolog(line):
     match tail:
         case [I("sub", ("esp", Const() as stack_adjust)), *tail]:
             pass
-        case [I("mov", ("eax", Const() as stack_adjust)), I("call", "0x0056AC60"), *tail]:
+        case [I("mov", ("eax", Const() as stack_adjust)), I("call", 0x0056AC60), *tail]:
             pass
         case tail:
             stack_adjust = 0
@@ -457,7 +579,7 @@ def match_prolog(line):
                 this_local = None
         case tail:
             return None, line
-    return Prolog(line_no, stack_adjust, this_local, cleanup_fn), (None, tail)
+    return Prolog(line_no, stack_adjust, this_local, cleanup_fn), (set(), tail)
 
 class Epilog:
     def __init__(self, line, stack_adjust):

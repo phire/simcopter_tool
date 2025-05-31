@@ -22,6 +22,7 @@ def cast_access(ty, prefix, offset, size):
 
 
 class BaseType:
+    size = None
     def __init__(self):
         self._refs = set()
         self.symbols = []

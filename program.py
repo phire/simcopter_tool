@@ -20,6 +20,17 @@ class Include:
         self.modules = []
         self.functions = []
 
+class Item:
+    def __init__(self, sym, address):
+        self.sym = sym
+        self.address = address
+        self.length = sym.Len
+
+    def post_process(self):
+        # This is called after the module has been fully processed
+        # and all symbols have been linked to types
+        pass
+
 class Usage:
 
     def __init__(self, ty, other, mode: TypeUsage):
@@ -70,6 +81,7 @@ class Module:
         self.locals = []
         self.globals = globs
         self.functions = {}
+        self.all_items = []
         self.unknowns = []
         self.used_types = defaultdict(set)
 
@@ -132,6 +144,10 @@ class Module:
                 fn = Function(program, self, sym, lines, contrib)
 
                 self.functions[fn.name] = fn
+                self.all_items += [fn]
+
+                if fn.length:
+                    program.items[fn.address: fn.address + fn.length] = fn
 
                 if source_file != self.sourceFile:
                     fn.source_file = source_file
@@ -140,7 +156,7 @@ class Module:
                     except KeyError:
                         pass
             elif isinstance(sym, Thunk):
-                self.functions[sym.Name] = sym
+                self.functions[sym.Name] = Item(sym, program.getAddr(sym.Segment, sym.Offset))
             elif isinstance(sym, CodeLabel):
                 # These only show up in libc, so just ignore those
                 if self.library.name in ("LIBCMTD.lib"):
@@ -261,6 +277,8 @@ class Program:
         data.gsi.apply_visablity(Visablity.Global, self.globals)
         data.pgsi.gsi.apply_visablity(Visablity.Public, self.globals)
 
+        self.items = IntervalTree()
+
         module_globals = [[] for _ in data.modules]
         for sym in self.globals:
             try:
@@ -296,6 +314,12 @@ class Program:
             library.addModule(m)
 
 
+        for m in self.modules:
+
+            for item in m.all_items:
+                item.post_process()
+
+
 
     def getInclude(self, filename):
         try:
@@ -306,6 +330,14 @@ class Program:
 
     def getAddr(self, segment, offset):
         return self.sections[segment].va + offset
+
+    def getItem(self, addr):
+        item = self.items[addr]
+
+        if item:
+            return item.pop().data
+        return None
+
 
 class Symbols:
     def __init__(self, symbols, types):
