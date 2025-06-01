@@ -150,8 +150,16 @@ class FunctionRef:
     def as_code(self):
        return f"{self.fn.name}"
 
+class BasicBlockRef:
+    def __init__(self, label):
+        self.label = label
 
-from iced_x86 import OpKind, Register, Mnemonic
+    def __repr__(self):
+        return f"BasicBlockRef({self.label})"
+
+    def as_code(self):
+        return self.label
+
 from x86 import formatter, REG_TO_STRING, memsize
 
 def process_operand(inst, i):
@@ -176,6 +184,8 @@ def process_operand(inst, i):
             if not target:
                 return formatter.format_operand(inst, i)
 
+            if isinstance(target, str):
+                return BasicBlockRef(target)
             if target.address == addr:
                 return FunctionRef(target)
             else:

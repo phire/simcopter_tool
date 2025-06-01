@@ -9,6 +9,7 @@ import tpi
 import x86
 import pydemangler
 import struct
+from x86 import Mnemonic as M
 
 import ir
 from ir import *
@@ -162,6 +163,8 @@ class Function:
         self.local_vars = []
         self.prolog = None
         self.epilog = None
+        self.targets = set()
+        self.external_targets = set()
 
         self.labels = defaultdict(list)
         for (offset, line) in lines.items():
@@ -272,14 +275,32 @@ class Function:
         labels = sorted(self.labels.items(), key=lambda x: x[0])
 
         lines = []
+
         for (start, label), (end, _) in pairwise(labels):
             addr = self.address + start
             size = end - start
 
             insts = []
+            def newbasicblock(inst):
+                nonlocal self, lines, addr, size, label, insts
+
+                assert inst.op_kind(0) == x86.OpKind.NEAR_BRANCH32
+                target = inst.near_branch32
+                if target < self.address or target >= self.address + self.length:
+                    self.external_targets.add(target)
+                elif target != inst.next_ip32:
+                    self.targets.add(target)
+                lines.append((label, addr, size, insts))
+                new_addr = inst.next_ip32
+                size -= new_addr - addr
+                addr = new_addr
+                insts = []
+                label = []
+
             for inst in x86.disassemble(data[start:end], addr):
                 insts.append(inst)
-                if inst.mnemonic == x86.Mnemonic.JMP and inst.op_kind(0) == x86.OpKind.MEMORY:
+                match inst.mnemonic:
+                  case M.JMP if inst.op_kind(0) == x86.OpKind.MEMORY:
                     addr = inst.memory_displacement
                     if addr > self.address and addr < self.address + self.length:
                         lines.append((label, addr, size, insts))
@@ -289,9 +310,20 @@ class Function:
                         break
                     else:
                         breakpoint()
+                  case M.JMP:
+                    newbasicblock(inst)
+                  case M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
+                       M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
+                    newbasicblock(inst)
+                  case M.JRCXZ, M.JCXZ, M.JECXZ:
+                    assert False, "Unexpected jump instruction: " + inst.mnemonic.name
+                #   case M.CALL:
+                #     assert inst.op_kind(0) == x86.OpKind.NEAR_BRANCH32
+                #     target = inst.near_branch32
+                #     self.external_targets.add(target)
 
-
-            lines.append((label, addr, size, insts))
+            if insts:
+                lines.append((label, addr, size, insts))
 
         return lines
 
@@ -314,12 +346,11 @@ class Function:
                 elif isinstance(label, BlockEnd):
                     scope = scopes.pop()
                     ir.set_scope(scope)
-                elif isinstance(label, SwitchPointers):
-                    # the pointers in a switch table
+                elif isinstance(label, (SwitchPointers, SwitchTable)):
                     skip = True
-                elif isinstance(label, SwitchTable):
-                    # the indexes into the pointers
-                    skip = True
+                    lines.append((labels, insts))
+            if skip:
+                continue
 
             if not skip:
                 insts = [I.from_inst(inst) for inst in insts]
@@ -346,51 +377,29 @@ class Function:
         s += f"{self.sig()} {{\n"
         p = self.p
 
-        inserts = []
-        scope = Scope(self.codeview, p, self)
-        scopes = []
+        intro = ""
 
-        def Foo(c, inserts):
-            s = ""
+        def cv_string(c):
+            nonlocal p
             if isinstance(c, codeview.BpRelative):
                 if c.Offset > 0:
-                    return s # skip args
+                    return "" # skip args
                 if c.Name in ["this"]:
-                    return s
-                #print(c)
+                    return ""
                 ty = p.types.types[c.Type]
-                s += f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
-            elif isinstance(c, codeview.BlockStart):
-                addr = p.getAddr(c.Segment, c.Offset)
-                assert not c.Name
-                #inserts += [(addr, c)]
+                return f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
             elif isinstance(c, codeview.LocalData):
                 addr = p.getAddr(c.Segment, c.Offset)
 
-                if c.Type == 0 and c.Name == "":
-                    s += f"\t // Switch table at 0x{addr:08x}\n"
-                    return s
-
                 ty = p.types.types[c.Type]
-                s += f"\tstatic const {ty.typestr(c.Name)} = {{ /* <data@0x{addr:08x}> */ }};\n"
-            elif isinstance(c, codeview.CodeLabel):
-                addr = p.getAddr(c.Segment, c.Offset)
-                assert c.Flags == 0
-                #inserts += [(addr, c)]
+                return f"\tstatic const {ty.typestr(c.Name)} = {{ /* <data@0x{addr:08x}> */ }};\n"
             elif isinstance(c, codeview.UserDefinedType):
                 ty = p.types.types[c.Type]
-                s += f"\t typedef {ty.typestr(c.Name)};\n"
-            else:
-                print(self.name)
-                print(c)
-            return s
-
-        intro = ""
+                return f"\t typedef {ty.typestr(c.Name)};\n"
+            return ""
 
         for c in self.codeview._children:
-            intro += Foo(c, inserts)
-
-        inserts = sorted(inserts, key=lambda x: x[0])
+            intro += cv_string(c)
 
         if intro:
             s += intro + "\n"
@@ -411,7 +420,7 @@ class Function:
                 if isinstance(label, BlockStart):
                     s += f"// Block start:\n"
                     for c in label.cv._children:
-                        s += Foo(c, inserts)
+                        s += cv_string(c)
                 if isinstance(label, BlockEnd):
                     s += f"// Block end:\n"
                 if isinstance(label, Label):
@@ -424,12 +433,26 @@ class Function:
                     skip = True
                 if isinstance(label, Line):
                     s += f"// LINE {label.line:d}:\n"
+            if not labels:
+                s += "\n"
 
             if skip:
                 continue
 
             for inst in insts:
+                try:
+                    addr = inst.inst.ip32
+                except AttributeError:
+                    pass
+                else:
+                    # print jump target labels
+                    if addr in self.targets:
+                        offset = addr - self.address
+                        s += f"_T{offset:02x}:\n"
                 s += inst.as_code()
+
+        if s[-2:] == "\n\n":
+            s = s[:-1]
 
         if self.prolog and not self.epilog:
             s += "\t// Couldn't match epilog\n"
@@ -504,8 +527,13 @@ class Scope:
         pass
 
     def code_access(self, pc, addr):
-        if addr >= self.fn.address and addr < self.fn.address + self.fn.length:
+        fnoffset = addr - self.fn.address
+
+        if fnoffset > 0 and fnoffset < self.fn.length:
             # within current function
+            if addr in self.fn.targets:
+
+                return f"_T{fnoffset:02x}"
             return None
 
         fn = self.p.getItem(addr)
@@ -579,7 +607,7 @@ def match_prolog(line):
                 this_local = None
         case tail:
             return None, line
-    return Prolog(line_no, stack_adjust, this_local, cleanup_fn), (set(), tail)
+    return Prolog(line_no, stack_adjust, this_local, cleanup_fn), (list(), tail)
 
 class Epilog:
     def __init__(self, line, stack_adjust):
