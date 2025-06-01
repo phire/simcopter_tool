@@ -32,11 +32,15 @@ class Store(Statement):
 
 
 class Reg(Expression):
-    def __init__(self, reg):
+    def __init__(self, reg, expr=None):
         self.reg = reg
+        self.expr = expr
 
     def __repr__(self):
-        return f"Register({self.reg})"
+        if self.expr:
+            return f"Reg({self.reg}, {self.expr})"
+        else:
+            return f"Reg({self.reg})"
 
     def __eq__(self, other):
         if isinstance(other, Reg):
@@ -45,7 +49,7 @@ class Reg(Expression):
             return self.reg == other
         return False
 
-class Const(LValue):
+class Const(RValue):
     __match_args__ = ("value",)
 
     def __init__(self, value):
@@ -63,7 +67,7 @@ class Const(LValue):
 
 
 
-class Mem(RValue):
+class Mem(LValue):
     __match_args__ = ("size")
     def __init__(self, size, base, displacement=0, index=None, scale=1):
         self.size = size
@@ -131,6 +135,25 @@ class SegOverride(Mem):
     def __repr__(self):
         return f"SegOverride(segment={self.segment}, {super().__repr__()})"
 
+class BinaryOp(RValue):
+    __match_args__ = ("op", "left", "right")
+    def __init__(self, op, left, right):
+        self.op = op
+        self.left = left
+        self.right = right
+
+    def __repr__(self):
+        return f"BinaryOp({self.op}, {self.left}, {self.right})"
+
+class UnaryOp(RValue):
+    __match_args__ = ("op", "operand")
+    def __init__(self, op, operand):
+        self.op = op
+        self.operand = operand
+
+    def __repr__(self):
+        return f"UnaryOp({self.op}, {self.operand})"
+
 class FunctionRef:
     def __init__(self, fn):
         self.fn = fn
@@ -160,16 +183,41 @@ class BasicBlockRef:
     def as_code(self):
         return self.label
 
+class SignExtend(LValue):
+    def __init__(self, size, expr):
+        self.size = size
+        self.expr = expr
+
+    def __repr__(self):
+        return f"SignExtend(size={self.size}, expr={self.expr})"
+
+class ZeroExtend(LValue):
+    def __init__(self, size, expr):
+        self.size = size
+        self.expr = expr
+
+    def __repr__(self):
+        return f"ZeroExtend(size={self.size}, expr={self.expr})"
+
+
+from iced_x86 import OpKind, Register, Mnemonic, OpAccess, InstructionInfoFactory
+info_factory = InstructionInfoFactory()
+
 from x86 import formatter, REG_TO_STRING, memsize
 
-def process_operand(inst, i):
+def process_operand(inst, i, state):
     op = formatter.get_instruction_operand(inst, i)
     if op is None:
          return formatter.format_operand(inst, i)
+    info = info_factory.info(inst)
 
     match inst.op_kind(op):
         case OpKind.REGISTER:
             reg = formatter.format_operand(inst, i)
+            if info.op_access(op) in (OpAccess.READ, OpAccess.READ_WRITE):
+                if expr := state.reg.get(reg):
+                    # If the register is already defined in the state, return that expression
+                    return expr
             return Reg(reg)
 
         case OpKind.IMMEDIATE8 | OpKind.IMMEDIATE8_2ND | OpKind.IMMEDIATE16 | OpKind.IMMEDIATE32 | OpKind.IMMEDIATE64 | OpKind.IMMEDIATE8TO16 | OpKind.IMMEDIATE8TO32 | OpKind.IMMEDIATE8TO64:
@@ -235,6 +283,51 @@ def process_operand(inst, i):
         case _:
             return formatter.format_operand(inst, i)
 
+def regsize(reg):
+    if REG_TO_STRING[reg].startswith("E"):
+        return 4
+    elif REG_TO_STRING[reg].startswith("R"):
+        return 8
+    else:
+        return 2
+
+def modifies_reg(inst, mnenomic, operands):
+    info = info_factory.info(inst)
+
+    if len(operands) != inst.op_count:
+        return None
+
+    if len(operands) == 2 and inst.op0_kind == OpKind.REGISTER and info.op1_access == OpAccess.READ:
+        if info.op0_access == OpAccess.READ:
+            # eg cmp/test
+            return None
+        if info.op0_access == OpAccess.WRITE:
+            if inst.mnemonic == Mnemonic.MOV:
+                # MOV op, reg
+                return operands[0], operands[1]
+            if inst.mnemonic == Mnemonic.MOVSX:
+                # MOVSX op, reg
+
+                return operands[0], SignExtend(regsize(inst.op0_register), operands[1])
+            if inst.mnemonic == Mnemonic.MOVZX:
+                # MOVZX op, reg
+                return operands[0], ZeroExtend(regsize(inst.op0_register), operands[1])
+
+            breakpoint()
+        elif info.op0_access == OpAccess.READ_WRITE:
+            # eg Add etc
+            return operands[0], BinaryOp(mnenomic, operands[0], operands[1])
+
+    if len(operands) == 1 and inst.op0_kind == OpKind.REGISTER:
+        # eg. INC reg, DEC reg
+        if info.op0_access == OpAccess.READ_WRITE:
+            return operands[0], (mnenomic, operands[0])
+        elif info.op0_access == OpAccess.WRITE:
+            # eg pop reg
+            return operands[0], mnenomic
+
+        return None
+
 
 class I:
     __match_args__ = ("mnenomic", "operands")
@@ -248,12 +341,30 @@ class I:
         self.operands = operands
         self.inst = inst
 
-    def from_inst(inst):
+    def from_inst(inst, state):
         mnemonic = formatter.format_mnemonic(inst)
+        operands = [process_operand(inst, i, state) for i in range(formatter.operand_count(inst))]
 
-        operands = [process_operand(inst, i) for i in range(formatter.operand_count(inst))]
+        modifies = modifies_reg(inst, mnemonic, operands)
+        if modifies:
+            reg, expr = modifies
+            state.reg[reg.reg] = Reg(reg.reg, expr)
 
         return I(mnemonic, operands, inst=inst)
+
+    def side_effects(self):
+        # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
+        info = info_factory.info(self.inst)
+        effects = []
+        for mem in info.used_memory():
+            if mem.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
+                effects.append("memory")
+        for reg in info.used_registers():
+            if reg.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
+                if reg.register not in (Register.EAX, Register.ECX, Register.EDX, Register.ESI, Register.EDI):
+                    # for now, we won't consider sub registers like AH, AL, etc to be side-effect free
+                    effects.append(REG_TO_STRING[reg.register])
+        return effects
 
     def __repr__(self):
         if isinstance(self.operands, tuple):
@@ -278,7 +389,9 @@ class I:
             return f"\t__asm        {self.mnenomic:6} {", ".join(ops)};\n"
         return f"\t__asm        {self.mnenomic};\n"
 
-
+class State:
+    def __init__(self):
+        self.reg = {}
 
 def set_scope(_scope):
     global scope

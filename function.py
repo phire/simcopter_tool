@@ -15,6 +15,7 @@ import ir
 from ir import *
 
 from enum import Enum
+from statement import match_statement
 
 class TypeUsage(Enum):
     Unknown = 0
@@ -352,8 +353,9 @@ class Function:
             if skip:
                 continue
 
-            if not skip:
-                insts = [I.from_inst(inst) for inst in insts]
+            state = ir.State()
+            insts = [I.from_inst(inst, state) for inst in insts]
+
             lines.append((labels, insts))
 
         self.prolog, tail  = match_prolog(lines.pop(0))
@@ -364,6 +366,17 @@ class Function:
             head, self.epilog = match_epilog(lines.pop())
             lines.append(head)
         self.body = lines
+
+        for labels, insts in self.body:
+            if isinstance(labels and labels[0], (SwitchPointers, SwitchTable)):
+                # skip switch tables
+                continue
+            #head, stmt = match_statement(insts, self)
+            # if stmt:
+            #     for inst in insts:
+            #         print(inst.as_code(), end="")
+            #     print(f"Statement: {stmt}")
+            #     #breakpoint()
 
 
     def sig(self):
