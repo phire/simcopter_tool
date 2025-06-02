@@ -1,6 +1,6 @@
 
 from access import Access
-
+from construct import *
 
 def cast_access(ty, prefix, offset, size):
     match size:
@@ -27,6 +27,7 @@ def cast_access(ty, prefix, offset, size):
 
 class BaseType:
     size = None
+    con = None  # Construct class for this type, if applicable
     def __init__(self):
         self._refs = set()
         self.symbols = []
@@ -60,6 +61,17 @@ class BaseType:
 
     def is_fwdref(self):
         return False
+
+    def parse_bytes(self, data):
+        if not self.con:
+            raise ValueError(f"{self.__class__.__name__} does not have a Construct class defined")
+        return self.con.parse(data)
+
+    def initializer(self, parsed):
+        return f"{parsed}"
+
+    def getCon(self):
+        return self.con
 
 # Special types
 
@@ -164,6 +176,7 @@ def derive_pointers(cls):
                 "TI": cls.TI + offset,
                 "s": f"{cls.s} {code}",
                 "size": size,
+                "con": None,
                 "__doc__": f"{comment} to {cls.__doc__}"
             }
         )
@@ -177,6 +190,7 @@ class Char(BaseType):
     TI = 0x0010
     s = "char"
     size = 1
+    con = Int8sl
 
 @derive_pointers
 class UChar(BaseType):
@@ -184,6 +198,7 @@ class UChar(BaseType):
     TI = 0x0020
     s = "unsigned char"
     size = 1
+    con = Int8ul
 
 @derive_pointers
 class RChar(BaseType):
@@ -191,6 +206,7 @@ class RChar(BaseType):
     TI = 0x0070
     s = "char"
     size = 1
+    con = Int8sl
 
 @derive_pointers
 class WChar(BaseType):
@@ -198,6 +214,7 @@ class WChar(BaseType):
     TI = 0x0071
     s = "wchar_t"
     size = 2
+    con = Int16sl
 
 @derive_pointers
 class Char16(BaseType):
@@ -219,6 +236,7 @@ class Int1(BaseType):
     TI = 0x0068
     s = "int8_t"
     size = 1
+    con = Int8sl
 
 @derive_pointers
 class UInt1(BaseType):
@@ -226,6 +244,7 @@ class UInt1(BaseType):
     TI = 0x0069
     s = "uint8_t"
     size = 1
+    con = Int8ul
 
 @derive_pointers
 class Short(BaseType):
@@ -233,6 +252,7 @@ class Short(BaseType):
     TI = 0x0011
     s = "short"
     size = 2
+    con = Int16sl
 
 @derive_pointers
 class UShort(BaseType):
@@ -240,6 +260,7 @@ class UShort(BaseType):
     TI = 0x0021
     s = "unsigned short"
     size = 2
+    con = Int16ul
 
 @derive_pointers
 class Int2(BaseType):
@@ -247,6 +268,7 @@ class Int2(BaseType):
     TI = 0x0072
     s = "int16_t"
     size = 2
+    con = Int16sl
 
 @derive_pointers
 class UInt2(BaseType):
@@ -254,6 +276,7 @@ class UInt2(BaseType):
     TI = 0x0073
     s = "uint16_t"
     size = 2
+    con = Int16ul
 
 @derive_pointers
 class Long(BaseType):
@@ -261,6 +284,7 @@ class Long(BaseType):
     TI = 0x0012
     s = "long"
     size = 4
+    con = Int32sl
 
 @derive_pointers
 class ULong(BaseType):
@@ -268,6 +292,7 @@ class ULong(BaseType):
     TI = 0x0022
     s = "unsigned long"
     size = 4
+    con = Int32ul
 
 @derive_pointers
 class Int4(BaseType):
@@ -275,6 +300,7 @@ class Int4(BaseType):
     TI = 0x0074
     s = "int32_t"
     size = 4
+    con = Int32sl
 
 @derive_pointers
 class UInt4(BaseType):
@@ -282,6 +308,7 @@ class UInt4(BaseType):
     TI = 0x0075
     s = "uint32_t"
     size = 4
+    con = Int32ul
 
 @derive_pointers
 class Quad(BaseType):
@@ -345,6 +372,10 @@ class Real32(BaseType):
     TI = 0x0040
     s = "float"
     size = 4
+    con = Float32b
+
+    def initializer(self, parsed):
+        return f"{parsed}"
 
 @derive_pointers
 class Real64(BaseType):
@@ -352,6 +383,10 @@ class Real64(BaseType):
     TI = 0x0041
     s = "double"
     size = 8
+    con = Float64b
+
+    def initializer(self, parsed):
+        return f"{parsed}"
 
 @derive_pointers
 class Real80(BaseType):
@@ -393,6 +428,7 @@ class Bool16(BaseType):
     TI = 0x007e
     s = "bool16_t"
     size = 2
+    con = Int16ul
 
 @derive_pointers
 class Bool32(BaseType):
@@ -400,6 +436,7 @@ class Bool32(BaseType):
     TI = 0x007f
     s = "bool32_t"
     size = 4
+    con = Int32ul
 
 @derive_pointers
 class Bool64(BaseType):

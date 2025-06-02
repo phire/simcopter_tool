@@ -8,6 +8,8 @@ from codeview import VarInt
 from collections import defaultdict
 
 class TypeLeaf(ConstructClass):
+    con = None  # Construct class for this type, if applicable
+
     def parsed(self, ctx):
         self.symbols = []
 
@@ -65,6 +67,9 @@ class TypeLeaf(ConstructClass):
     def is_fwdref(self):
         return False
 
+    def getCon(self):
+        return self.con
+
 class TypeIndex(ConstructValueClass):
     subcon = Int16ul
 
@@ -104,6 +109,12 @@ class TypeIndex(ConstructValueClass):
 
     def access(self, prefix, offset, size):
         return self.Type.access(prefix, offset, size)
+
+    def initializer(self, parsed):
+        return self.Type.initializer(parsed)
+
+    def getCon(self):
+        return self.Type.getCon()
 
 class Bitfield(ConstructClass):
     def __str__(self):
@@ -228,6 +239,9 @@ class LfModifier(TypeLeaf):
         "Type" / TypeIndex, # Modified types
     )
 
+    def getCon(self):
+        return self.Type.Type.con
+
     def mods(self):
         s = ""
         if self.Attributes.unaligned:
@@ -249,6 +263,9 @@ class LfModifier(TypeLeaf):
 
     def access(self, prefix, offset, size):
         return self.Type.access(prefix, offset, size)
+
+    def initializer(self, parsed):
+        return self.Type.Type.initializer(parsed)
 
 @TpRec(0x0002) # LF_POINTER_16t
 class LfPointer(TypeLeaf):
@@ -374,6 +391,17 @@ class LfArray(TypeLeaf):
     #def parsed(self, ctx):
         #assert self.IndexType.value == 17, "Array index type should be uint32_t"
 
+    def parsed(self, ctx):
+        try:
+            pass
+        except AttributeError:
+            pass
+
+    def initializer(self, parsed):
+        init = self.Type.Type.initializer
+        emnts = [init(x) for x in parsed]
+        return f"{{{', '.join(emnts)}}}"
+
     def shortstr(self):
         return self.typestr()
 
@@ -400,6 +428,14 @@ class LfArray(TypeLeaf):
 
         array = ArrayAccess(prefix, index, self.Type.Type)
         return array.access(var_off, size)
+
+    def getCon(self):
+        element_size = self.Type.Type.type_size()
+        element_con = self.Type.Type.getCon()
+        if element_size and element_con is not None:
+            return Array(self.Size.value // element_size, element_con)
+
+
 
 class FrowardRef(TypeLeaf):
     def linkTIs(self, other, tpi):

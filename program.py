@@ -32,6 +32,15 @@ class Item:
         # and all symbols have been linked to types
         pass
 
+    def data(self):
+        try:
+            contrib = self.sym.contrib
+            offset = self.sym.contribOffset
+            length = self.length
+            return contrib._data[offset: offset+length]
+        except AttributeError:
+            return None
+
 class Data(Item):
     def __init__(self, sym, address, ty):
         self.sym = sym
@@ -43,18 +52,37 @@ class Data(Item):
         self.ty = ty
         self.name = sym.Name
 
+    def initializer(self):
+        if self.ty.getCon() is None:
+            # If there is no construct, we cannot initialize it
+            return "{ 0 /* todo */ }"
+        if (data := self.data()) is None:
+            return "{ 0 /* error */ }"
+
+        parsed = self.ty.getCon().parse(data)
+
+        return self.ty.initializer(parsed)
+
     def as_code(self):
         cls = getattr(self.ty, '_class', None)
         cls = getattr(self.ty, '_def_class', cls)
         s = self.ty.typestr(self.name)
 
+        if isinstance(self.sym, LocalData):
+            s = f"static {s}"
+
+        if self.sym.visablity == Visablity.Public:
+            s = f"extern {s}"
+
         try:
-            if not self.sym.contrib.is_bss():
-                s += f" = {{ /* <data@0x{self.address:08x}> */ }};\n"
-            else:
-                s += ";\n"
+            is_bss = self.sym.contrib.is_bss()
         except AttributeError:
             s += "; // Contrib missing\n"
+            return s
+        if not is_bss:
+            s += f" = {self.initializer()};\n"
+        else:
+            s += ";\n"
 
         return s
 
@@ -70,6 +98,9 @@ class Usage:
                 case tpi.LfModifier():
                     ty = ty.Type.Type
                     mode = self.Modifier(ty, mode)
+                case tpi.LfArray():
+                    ty = ty.Type.Type
+                    mode = self.Array(ty, mode)
                 case _:
                     break
         self.ty = ty
@@ -93,6 +124,14 @@ class Usage:
 
         def __repr__(self):
             return f"Ptr({self.ptr_ty.typestr()}, {self.mode!r})"
+
+    class Array:
+        def __init__(self, array_ty, mode):
+            self.array_ty = array_ty
+            self.mode = mode
+
+        def __repr__(self):
+            return f"Array({self.array_ty.typestr()}, {self.mode!r})"
 
 
     def __repr__(self):
