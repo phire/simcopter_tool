@@ -1,4 +1,5 @@
 #from tpi import *
+from access import AccessMember
 import tpi
 import base_types
 import textwrap
@@ -182,6 +183,11 @@ class Class:
         return c
 
     def access(self, prefix, offset, size):
+        if not isinstance(offset, int):
+            # special case for accessing an array that is the first member
+            m = self.members.at(0).pop()
+            return m.data.access_field(prefix, offset, size)
+
         m = self.members.at(offset)
         if not m:
             return f"{prefix}<{self.name}+0x{offset:02x}>"
@@ -301,7 +307,8 @@ class Member(Field):
         return c
 
     def access_field(self, prefix, offset, size):
-        return self.ty.access(prefix + self.name, offset, size)
+        prefix = AccessMember(prefix, self.name, self.ty)
+        return self.ty.access(prefix, offset, size)
 
 class StaticMember(Field):
     def __init__(self, field, p):

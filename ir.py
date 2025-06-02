@@ -1,20 +1,26 @@
-
+from access import ArrayAccess
+from base_types import ScaleExpr
 
 scope = None
 
-
-class Block:
-    pass
-
-class BasicBlock:
-    pass
-
 class Expression:
-    pass
+
+    def is_known(self):
+        return True
+
+    def as_code(self):
+        raise ValueError(f"Can't convert {self.__class__.__name__} {self} to code")
+
+    def as_asm(self):
+        return self.as_code()
 
 class LValue(Expression):
     def __init__(self):
         pass
+
+    def as_rvalue(self):
+        # LValues can be used as RValues
+        return self.as_lvalue()
 
 class RValue(LValue):
     pass
@@ -32,9 +38,10 @@ class Store(Statement):
 
 
 class Reg(Expression):
-    def __init__(self, reg, expr=None):
+    def __init__(self, reg, expr=None, inst=None):
         self.reg = reg
         self.expr = expr
+        self.inst = inst # The instruction that wrote to this register
 
     def __repr__(self):
         if self.expr:
@@ -48,6 +55,24 @@ class Reg(Expression):
         if isinstance(other, str):
             return self.reg == other
         return False
+
+    def as_lvalue(self):
+        if not self.expr:
+            raise ValueError("Cannot convert Reg to LValue without an expression")
+        return self.expr.as_lvalue()
+
+    def as_rvalue(self):
+        if not self.expr:
+            raise ValueError("Cannot convert Reg to RValue without an expression")
+        return self.expr.as_rvalue()
+
+    def is_known(self):
+        if self.expr:
+            return self.expr.is_known()
+        return False
+
+    def as_asm(self):
+        return self.reg
 
 class Const(RValue):
     __match_args__ = ("value",)
@@ -65,19 +90,133 @@ class Const(RValue):
             return self.value == other
         return False
 
+    def as_rvalue(self):
+        return f"{self.value:#x}"
 
+class Addr(LValue):
+    # constant address
+    def __init__(self, addr):
+        self.addr = addr
+        self.scope = scope
+
+    def __repr__(self):
+        return f"Addr({self.addr})"
+
+class Displace(LValue):
+    # adds a displacement to an address
+    def __init__(self, expr, displacement):
+        self.addr = expr
+        self.disp = displacement
+        self.scope = scope
+
+    def __repr__(self):
+        return f"Displace({self.addr}, {self.disp})"
+
+class Index(LValue):
+    # adds a scaled index to an address
+    def __init__(self, base_expr, index_expr, scale):
+        self.base_expr = base_expr
+        self.index_expr = index_expr
+        self.scale = scale
+        self.scope = scope
+
+    def __repr__(self):
+        return f"Index({self.base_expr}, {self.index_expr}, {self.scale})"
 
 class Mem(LValue):
-    __match_args__ = ("size")
+    __match_args__ = ("size", "expr")
     def __init__(self, size, base, displacement=0, index=None, scale=1):
+
+        self.scope = scope
         self.size = size
         self.base = base
         self.index = index
         self.scale = scale
-        self.displacement = displacement
+        self.disp = displacement
+        self.expr = None
+        expr = None
+        if base:
+            if not base.expr:
+                return
+            expr = base.expr
+        if index:
+            if not index.expr:
+                return
+            expr = Index(expr, index.expr, scale)
+        if displacement:
+            if not expr:
+                expr = Addr(self.disp)
+            else:
+                expr = Displace(expr, displacement)
+        self.expr = expr
 
     def __repr__(self):
-        return f"Mem(size={self.size} base={self.base}, displacement={self.displacement})"
+        if self.expr:
+            return f"Mem{self.size}({self.expr})"
+        return f"Mem(size={self.size} base={self.base}, displacement={self.disp})"
+
+    def as_lvalue(self):
+        if not self.expr:
+            raise ValueError("Cannot convert Mem to LValue without an expression")
+
+
+        if self.base:
+            access = self.base.expr.as_lvalue()
+            offset = self.disp
+            if self.index:
+                offset = f"{self.index.expr.as_rvalue()} * {self.scale} + {offset:x}"
+            return access.deref(offset, self.size)
+
+        elif self.disp and not self.index:
+            breakpoint()
+            return self.scope.data_access(self.disp, self.size)
+        else:
+            breakpoint()
+        breakpoint()
+
+    def as_asm(self):
+        access = None
+        if self.disp:
+            access = self.scope.data_access(self.disp, self.size)
+
+        if not access:
+            raise ValueError(f"Memory at disp {self.disp} not found in scope")
+
+        s = ""
+        if self.base:
+            s += self.base.as_asm()
+        if self.index:
+            s += "+" if s else ""
+            s += self.index.as_asm()
+            if self.scale != 1:
+                s += f"*{self.scale}"
+        if self.disp and not access:
+            s += "-" if self.disp < 0 else ""
+            s += "+" if self.disp >= 0 or s else ""
+            s += f"0x{self.disp:X}"
+
+        if s and isinstance(access, ArrayAccess):
+            if access.index == 0:
+                # remove extra level of indirection
+                access = access.lvalue
+            else:
+                # todo: need to take address of lvalue
+                pass
+
+        try:
+            a = access.as_asm()
+        except AttributeError:
+            a = str(access)
+
+        if access and s:
+            return f"{a}[{s}]"
+        if access:
+            return a
+
+        if self.size:
+            SIZES = ["<{0} ptr>", "byte ptr", "word ptr", "{3} ptr", "dword ptr", "{5} ptr", "{6} ptr", "{7} ptr", "qword ptr"]
+            return f"{SIZES[self.size]} [{s}]"
+        return f"[{s}]"
 
 class MemBase(Mem):
     __match_args__ = ("base", "size")
@@ -85,50 +224,89 @@ class MemBase(Mem):
         super().__init__(size, base)
 
     def __repr__(self):
+        if self.expr:
+            return Mem.__repr__(self)
         return f"MemBase(size={self.size}, base={self.base})"
 
 class MemDisp(Mem):
-    __match_args__ = ("displacement", "size")
+    __match_args__ = ("disp", "size")
     def __init__(self, size, displacement):
         super().__init__(size, None, displacement)
 
     def __repr__(self):
-        return f"MemDisp(size={self.size}, displacement={self.displacement})"
+        if self.expr:
+            return Mem.__repr__(self)
+        return f"MemDisp(size={self.size}, displacement={self.disp})"
+
+    def as_code(self):
+        access = self.scope.data_access(self.disp, self.size)
+        if not access:
+            raise ValueError(f"Memory at disp {self.disp} not found in scope")
+        return f"{access}"
 
 class MemBaseDisp(Mem):
-    __match_args__ = ("base", "displacement", "size")
+    __match_args__ = ("base", "disp", "size")
     def __init__(self, size, base, displacement):
         super().__init__(size, base, displacement)
 
     def __repr__(self):
-        return f"MemBaseDisp(size={self.size}, base={self.base}, displacement={self.displacement})"
+        if self.expr:
+            return Mem.__repr__(self)
+        return f"MemBaseDisp(size={self.size}, base={self.base}, disp={self.disp})"
+
+class MemIndexed(Mem):
+    def __init__(self, size, index, scale, displacement):
+        super().__init__(size, None, displacement, index, scale)
+
+    def __repr__(self):
+        if self.expr:
+            return Mem.__repr__(self)
+        return f"MemIndexed(size={self.size}, index={self.index}, scale={self.scale}, disp={self.disp})"
+
+    def as_code(self):
+        offset = ScaleExpr(self.index, self.scale)
+        access = self.scope.data_access(self.disp, self.size, offset_expr=offset)
+
+        if not access:
+            raise ValueError(f"Memory at disp {self.disp} not found in scope")
+        return f"{access}"
 
 class MemComplex(Mem):
     def __init__(self, size, base, index, scale, displacement=0):
         super().__init__(size, base, displacement, index, scale)
 
     def __repr__(self):
-        return f"MemIndexed(size={self.size}, base={self.base}, index={self.index}, scale={self.scale}, displacement={self.displacement})"
-
+        if self.expr:
+            return Mem.__repr__(self)
+        return f"MemComplex(size={self.size}, base={self.base}, index={self.index}, scale={self.scale}, displacement={self.disp})"
 
 class LocalVar(Mem):
     def __init__(self, size, displacement):
-        super().__init__(size, base="EBP", displacement=displacement)
-        self.sym = scope.stack_access(displacement, size)
+        #super().__init__(size, base="EBP", displacement=displacement)
+        self.size = size
+        self.disp = displacement
+        self.scope = scope
+        self.access = scope.stack_access(displacement, size)
 
     def __repr__(self):
-        return f"LocalVar({self.displacement})"
+        return f"LocalVar({self.disp})"
 
     def as_code(self):
-        if not self.sym:
-            raise ValueError(f"Local variable at {self.displacement} not found in scope")
-        return f"{self.sym}"
+        if not self.access:
+            raise ValueError(f"Local variable at {self.disp} not found in scope")
+        return f"{self.access}"
+
+    def as_lvalue(self):
+        return self.access
+
+    def as_asm(self):
+        return self.as_code()
 
 
 class SegOverride(Mem):
     __match_args__ = ("segment", "mem")
     def __init__(self, segment, mem):
-        super().__init__(mem.size, mem.base, mem.displacement, mem.index, mem.scale)
+        super().__init__(mem.size, mem.base, mem.disp, mem.index, mem.scale)
         self.mem = mem
         self.segment = segment
 
@@ -173,14 +351,22 @@ class FunctionRef:
     def as_code(self):
        return f"{self.fn.name}"
 
+    def as_asm(self):
+        return f"{self.fn.name}"
+
 class BasicBlockRef:
-    def __init__(self, label):
+    def __init__(self, addr, label, scope):
         self.label = label
+        self.addr = addr
+        self.scope = scope
 
     def __repr__(self):
         return f"BasicBlockRef({self.label})"
 
     def as_code(self):
+        return self.label
+
+    def as_asm(self):
         return self.label
 
 class SignExtend(LValue):
@@ -211,14 +397,24 @@ def process_operand(inst, i, state):
          return formatter.format_operand(inst, i)
     info = info_factory.info(inst)
 
+    def get_reg(reg_id):
+        if reg_id == Register.NONE:
+            return None
+        reg = REG_TO_STRING[reg_id]
+        if expr := state.reg.get(reg):
+            return expr
+        return Reg(reg)
+
+
     match inst.op_kind(op):
         case OpKind.REGISTER:
-            reg = formatter.format_operand(inst, i)
+            reg_id = inst.op_register(op)
             if info.op_access(op) in (OpAccess.READ, OpAccess.READ_WRITE):
-                if expr := state.reg.get(reg):
+
+                if expr := get_reg(reg_id):
                     # If the register is already defined in the state, return that expression
                     return expr
-            return Reg(reg)
+            return Reg(REG_TO_STRING[reg_id])
 
         case OpKind.IMMEDIATE8 | OpKind.IMMEDIATE8_2ND | OpKind.IMMEDIATE16 | OpKind.IMMEDIATE32 | OpKind.IMMEDIATE64 | OpKind.IMMEDIATE8TO16 | OpKind.IMMEDIATE8TO32 | OpKind.IMMEDIATE8TO64:
             imm = inst.immediate(op)
@@ -233,7 +429,7 @@ def process_operand(inst, i, state):
                 return formatter.format_operand(inst, i)
 
             if isinstance(target, str):
-                return BasicBlockRef(target)
+                return BasicBlockRef(addr, target, scope)
             if target.address == addr:
                 return FunctionRef(target)
             else:
@@ -257,17 +453,19 @@ def process_operand(inst, i, state):
             if disp > 0x7FFFFFFF:
                 disp -= 0x100000000
 
-            base = REG_TO_STRING[inst.memory_base] if inst.memory_base != Register.NONE else None
-            index = REG_TO_STRING[inst.memory_index] if inst.memory_index != Register.NONE else None
+            base = get_reg(inst.memory_base)
+            index = get_reg(inst.memory_index)
             scale = inst.memory_index_scale
             try:
                 size = memsize(inst)
             except ValueError:
                 return formatter.format_operand(inst, i)
 
-            if index:
+            if index and base:
                 mem = MemComplex(size, base, index, scale, disp)
-            elif not base and not index:
+            elif index:
+                mem = MemIndexed(size, index, scale, disp)
+            elif not base:
                 mem = MemDisp(size,  disp)
             elif disp:
                 mem = MemBaseDisp(size, base, disp)
@@ -297,37 +495,37 @@ def modifies_reg(inst, mnenomic, operands):
     if len(operands) != inst.op_count:
         return None
 
-    if len(operands) == 2 and inst.op0_kind == OpKind.REGISTER and info.op1_access == OpAccess.READ:
+    if len(operands) == 2 and inst.op0_kind == OpKind.REGISTER:
         if info.op0_access == OpAccess.READ:
             # eg cmp/test
             return None
-        if info.op0_access == OpAccess.WRITE:
+        if info.op0_access == OpAccess.WRITE and info.op1_access == OpAccess.READ:
             if inst.mnemonic == Mnemonic.MOV:
                 # MOV op, reg
                 return operands[0], operands[1]
             if inst.mnemonic == Mnemonic.MOVSX:
                 # MOVSX op, reg
-
                 return operands[0], SignExtend(regsize(inst.op0_register), operands[1])
             if inst.mnemonic == Mnemonic.MOVZX:
                 # MOVZX op, reg
                 return operands[0], ZeroExtend(regsize(inst.op0_register), operands[1])
 
-            breakpoint()
+        elif info.op0_access == OpAccess.WRITE:
+            return operands[0], UnaryOp(mnenomic, operands[1])
         elif info.op0_access == OpAccess.READ_WRITE:
             # eg Add etc
             return operands[0], BinaryOp(mnenomic, operands[0], operands[1])
 
+
     if len(operands) == 1 and inst.op0_kind == OpKind.REGISTER:
         # eg. INC reg, DEC reg
         if info.op0_access == OpAccess.READ_WRITE:
-            return operands[0], (mnenomic, operands[0])
+            return operands[0], UnaryOp(mnenomic, operands[0])
         elif info.op0_access == OpAccess.WRITE:
             # eg pop reg
             return operands[0], mnenomic
 
         return None
-
 
 class I:
     __match_args__ = ("mnenomic", "operands")
@@ -340,17 +538,21 @@ class I:
                 operands = tuple(ops)
         self.operands = operands
         self.inst = inst
+        self.used = False
 
     def from_inst(inst, state):
+        global g_state
+        g_state = state
         mnemonic = formatter.format_mnemonic(inst)
         operands = [process_operand(inst, i, state) for i in range(formatter.operand_count(inst))]
 
         modifies = modifies_reg(inst, mnemonic, operands)
+        ir = I(mnemonic, operands, inst)
         if modifies:
             reg, expr = modifies
-            state.reg[reg.reg] = Reg(reg.reg, expr)
+            state.reg[reg.reg] = Reg(reg.reg, expr, ir)
 
-        return I(mnemonic, operands, inst=inst)
+        return ir
 
     def side_effects(self):
         # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
@@ -380,9 +582,12 @@ class I:
     def as_code(self):
         ops = []
         for i, op in enumerate(self.ops()):
+            if isinstance(op, str):
+                ops.append(op)
+                continue
             try:
-                ops.append(op.as_code())
-            except:
+                ops.append(op.as_asm())
+            except ValueError:
                 ops.append(formatter.format_operand(self.inst, i))
 
         if ops:

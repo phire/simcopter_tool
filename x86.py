@@ -1,7 +1,7 @@
 from iced_x86 import Decoder, Formatter, FormatterSyntax, Mnemonic, OpKind, Register, MemorySize
 
 def create_enum_dict(module):
-    return {module.__dict__[key]:key for key in module.__dict__ if isinstance(module.__dict__[key], int)}
+    return {module.__dict__[key]:key.lower() for key in module.__dict__ if isinstance(module.__dict__[key], int)}
 
 MEMSIZE_TO_STRING = create_enum_dict(MemorySize)
 REG_TO_STRING = create_enum_dict(Register)

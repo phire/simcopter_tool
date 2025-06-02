@@ -1,6 +1,7 @@
 
 from construct import *
-from base_types import cast_access
+from access import Access, ArrayAccess
+from base_types import cast_access, ScaleExpr
 from constructutils import *
 
 from codeview import VarInt
@@ -54,7 +55,7 @@ class TypeLeaf(ConstructClass):
 
     def access(self, prefix, offset, size):
         if offset == 0 and not size or size == self.type_size():
-            return prefix
+            return Access(size, prefix, self)
 
         return cast_access(self, prefix, offset, size)
 
@@ -337,18 +338,27 @@ class LfPointer(TypeLeaf):
         return 4
 
     def access(self, prefix, offset, size):
-        if offset:
-            match self.Attributes.ptrmode:
-                case "Ptr":
-                    prefix += "->"
-                case "Ref":
-                    #prefix += "."
-                    pass
-                case _:
-                    raise NotImplementedError(f"Access not implemented for {self.Attributes.ptrmode}")
-            return self.Type.access(prefix, offset, size)
-        return prefix
+        # if offset:
+        #     match self.Attributes.ptrmode:
+        #         case "Ptr":
+        #             prefix += "->"
+        #         case "Ref":
+        #             #prefix += "."
+        #             pass
+        #         case _:
+        #             raise NotImplementedError(f"Access not implemented for {self.Attributes.ptrmode}")
+        #     return self.Type.access(prefix, offset, size)
+        return Access(size, prefix, self)
 
+    def deref(self, prefix, offset, size):
+        match self.Attributes.ptrmode:
+            case "Ptr":
+                prefix += "->"
+            case "Ref":
+                prefix += "."
+            case _:
+                raise NotImplementedError(f"Dereference not implemented for {self.Attributes.ptrmode}")
+        return self.Type.access(prefix, offset, size)
 
 @TpRec(0x0003) # LF_ARRAY_16t
 class LfArray(TypeLeaf):
@@ -381,16 +391,15 @@ class LfArray(TypeLeaf):
 
     def access(self, prefix, offset, size):
         element_size = self.Type.type_size()
-        element = offset // element_size
+        if isinstance(offset, ScaleExpr):
+            index = offset.expr
+            var_off = 0
+        else:
+            index = offset // element_size
+            var_off = offset - index * element_size
 
-        if self.Size.value != 0:
-            assert not size or offset + size <= self.Size.value, "Array access out of bounds"
-
-        var_off = offset - element * element_size
-        prefix = f"{prefix}[{element}]"
-        return self.Type.access(prefix, var_off, size)
-
-
+        array = ArrayAccess(prefix, index, self.Type.Type)
+        return array.access(var_off, size)
 
 class FrowardRef(TypeLeaf):
     def linkTIs(self, other, tpi):
@@ -459,12 +468,9 @@ class LfClass(FrowardRef):
             return None
 
     def access(self, prefix, offset, size):
-        if not prefix.endswith("->"):
-            assert not prefix.endswith(".")
-            prefix += "."
         cls = self.get_class()
         if cls is None:
-            return f"{prefix}<{self.Name}+0x{offset:02x}:{size}>"
+            return Access(size, f"{prefix}<{self.Name}+0x{offset:02x}:{size}>", self, offset=offset)
         return cls.access(prefix, offset, size)
 
 @TpRec(0x0005) # LF_STRUCTURE_16t
@@ -486,7 +492,7 @@ class LfUnion(FrowardRef):
 
     def access(self, prefix, offset, size):
         # todo: maybe we can guess which field based on offset+size?
-        return f"{prefix}<{self.Name}+0x{offset:02x}:{size}>"
+        return Access(size, f"{prefix}<{self.Name}+0x{offset:02x}:{size}>", self, offset=offset)
 
 
 @TpRec(0x0007) # LF_ENUM_16t
@@ -537,6 +543,10 @@ class LfProcedure(TypeLeaf):
         if name:
             return f"{self.rvtype.typestr()} (*{name})({args})"
         return f"{self.rvtype.typestr()} ({args})"
+
+    def type_size(self):
+        #this seems to be a pointer to a function, not the function itself
+        return 4
 
 
 @TpRec(0x0009) # LF_MFUNCTION_16t

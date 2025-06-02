@@ -2,6 +2,26 @@
 import ir
 from ir import *
 
+class BasicBlock:
+    def __init__(self, insts, scope, labels):
+        self.insts = insts
+        self.scope = scope
+        self.labels = labels
+        self.effects = [x for x in insts if x.side_effects()]
+        self.statements = insts[:]
+
+    def address(self):
+        if not self.insts:
+            return None
+        return self.insts[0].inst.ip32
+
+    def dbg_name(self):
+        fn = self.scope.fn
+        addr = self.address()
+        if not addr:
+            return f"{fn.name}+(no address)"
+        offset = addr - fn.address
+        return f"{fn.name}+{offset:#x}"
 
 class Statement:
      pass
@@ -15,9 +35,12 @@ class Assign(Statement):
         return f"Assign({self.target}, {self.value})"
 
     def as_code(self):
-        return f"{self.target} = {self.value}"
+        return f"{self.target.as_lvalue()} = {self.value.as_rvalue()}"
 
-class Modify(Statement):
+    def __bool__(self):
+        return self.target.is_known() and self.value.is_known()
+
+class Modify(Assign):
     def __init__(self, op, target, value):
         self.op = op
         self.target = target
@@ -27,7 +50,9 @@ class Modify(Statement):
         return f"Modify({self.op}, {self.target}, {self.value})"
 
     def as_code(self):
-        return f"{self.target} {self.op}= {self.value}"
+        return f"{self.target.as_lvalue()} {self.op}= {self.value.as_rvalue()}"
+
+
 
 class Increment(Statement):
     def __init__(self, target):
@@ -37,7 +62,7 @@ class Increment(Statement):
         return f"Increment({self.target})"
 
     def as_code(self):
-        return f"{self.target}++"
+        return f"{self.target.as_lvalue()}++"
 
 class Decrement(Statement):
     def __init__(self, target):
@@ -47,38 +72,39 @@ class Decrement(Statement):
         return f"Decrement({self.target})"
 
     def as_code(self):
-        return f"{self.target}--"
+        return f"{self.target.as_lvalue()}--"
 
 
-def match_statement(insts, func):
-    if not insts:
-        return insts, None
-
-    address = insts[0].inst.ip32
-    offset = address - func.address
-
-    print(f"function: {func.name}+{offset:#x}")
-    effect_insts = []
-    for inst in insts:
-        effects = inst.side_effects()
-        if effects:
-            print(f"inst {inst} has side effects: {effects}")
-            effect_insts.append(inst)
-        else:
-            print(f"inst {inst}")
+def match_statement(bblock):
+    if not bblock.insts:
+        return None
 
 
-    match effect_insts:
+
+    head = stmt = None
+    match bblock.effects:
         case [*head, I("mov", (Mem() as mem, Expression() as expr))]:
-            return head, Assign(mem, expr)
+            stmt = Assign(mem, expr)
         case [*head, I("add", (Expression() as expr, Mem() as mem))]:
-            return head, Modify("+", mem, expr)
+            stmt = Modify("+", mem, expr)
         case [*head, I("sub", (Expression() as expr, Mem() as mem))]:
-            return head, Modify("-", mem, expr)
+            stmt = Modify("-", mem, expr)
         case [*head, I("inc", (Mem() as mem,))]:
-            return head, Increment(mem)
+            stmt = Increment(mem)
         case [*head, I("dec", (Mem() as mem,))]:
-            return head, Decrement(mem)
+            stmt = Decrement(mem)
 
-    return insts, None
+    if not stmt:
+        return None
+
+    print(f"function: {bblock.dbg_name()}")
+    for inst in bblock.insts:
+        print(f"  {inst}")
+    print(f"matched: {stmt}")
+    #try:
+    print(f"  code: {stmt.as_code()}")
+
+    #breakpoint()
+
+    return None
 

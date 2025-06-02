@@ -25,14 +25,25 @@ class Item:
         self.sym = sym
         self.address = address
         self.length = sym.Len
+        self.name = sym.Name
 
     def post_process(self):
         # This is called after the module has been fully processed
         # and all symbols have been linked to types
         pass
 
-class Usage:
+class Data(Item):
+    def __init__(self, sym, address, ty):
+        self.sym = sym
+        self.address = address
+        try:
+            self.length = ty.type_size()
+        except:
+            self.length = 1
+        self.ty = ty
+        self.name = sym.Name
 
+class Usage:
     def __init__(self, ty, other, mode: TypeUsage):
         while True:
             match ty:
@@ -119,6 +130,9 @@ class Module:
                 g.contrib.register(g, g.Offset - g.contrib.Offset, 0)
             except AttributeError:
                 continue
+            item = Data(g, program.getAddr(g.Segment, g.Offset), program.types.types[g.Type])
+            if item.length:
+                program.items[item.address: item.address + item.length] = item
 
         for sym in symbols or []:
             if isinstance(sym, (ObjName, CompileFlags)):
@@ -293,6 +307,15 @@ class Program:
                 module_globals[idx].append(sym)
             else:
                 self.extra_globals.append(sym)
+
+        for g in self.extra_globals:
+            if g.Segment == 7:
+                continue
+            # Todo: These are globals that are not in any module... for some reason
+
+            item = Data(g, self.getAddr(g.Segment, g.Offset), self.types.types[g.Type])
+            if item.length:
+                self.items[item.address: item.address + item.length] = item
 
         # process all modules
         for i, (modi, sources, contribs, symbols, lines) in enumerate(data.modules):

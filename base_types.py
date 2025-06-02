@@ -1,4 +1,7 @@
 
+from access import Access
+
+
 def cast_access(ty, prefix, offset, size):
     match size:
         case None:
@@ -12,13 +15,14 @@ def cast_access(ty, prefix, offset, size):
         case _:
             raise ValueError(f"Cannot access {size} bytes at offset {offset} in {ty.typestr()}")
 
-    if offset == 0:
-        return f"reinterpret_cast<{access_type}>({prefix})"
-    elif offset + size <= ty.size:
-        # TODO: Why would the compiler even generate this in debug mode?
-        return f"*reinterpret_cast<{access_type}*>(reinterpret_cast<char*>(&{prefix}) + {offset})"
+    if not offset:
+        return Access(size, f"reinterpret_cast<{access_type}>({prefix})", ty)
+    #elif offset + size <= ty.size:
     else:
-        raise ValueError(f"Cannot access {size} bytes at offset {offset} in {ty.typestr()}")
+        # TODO: Why would the compiler even generate this in debug mode?
+        return Access(size, f"*reinterpret_cast<{access_type}*>(reinterpret_cast<char*>(&{prefix}) + {offset})", ty)
+    #else:
+    #    raise ValueError(f"Cannot access {size} bytes at offset {offset} in {ty.typestr()}")
 
 
 class BaseType:
@@ -433,3 +437,22 @@ types = [None] * 0x1000
 for v in list(globals().values()):
     if isclass(v) and issubclass(v, BaseType) and v is not BaseType:
         types[v.TI] = v()
+
+
+class ScaleExpr:
+    # represents a scaled index
+    def __init__(self, expr, scale):
+        self.expr = expr
+        self.scale = scale
+
+    def __repr__(self):
+        return f"ScaleExpr({self.expr}, {self.scale})"
+
+    def scale_str(self):
+        if self.scale == 1:
+            return ""
+        else:
+            return f" * {self.scale}"
+
+    def as_asm(self):
+        return f"{self.expr.as_asm()}{self.scale_str()}"
