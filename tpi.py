@@ -473,6 +473,14 @@ class LfClass(FrowardRef):
             return Access(size, f"{prefix}<{self.Name}+0x{offset:02x}:{size}>", self, offset=offset)
         return cls.access(prefix, offset, size)
 
+    def as_code(self):
+        cls = getattr(self, '_class', None)
+        cls = getattr(self, '_def_class', cls)
+        if cls is None:
+            return f"// {self.Name} Class implementation not found\n"
+        return cls.as_code()
+
+
 @TpRec(0x0005) # LF_STRUCTURE_16t
 class LfStruct(LfClass):
     pass
@@ -507,6 +515,26 @@ class LfEnum(FrowardRef):
 
     def type_size(self):
         return self.utype.type_size()
+
+    def as_code(self):
+        if self.is_fwdref():
+            try:
+                return self._definition.as_code()
+            except AttributeError:
+                return f"// {self.Name} Enum implementation not found\n"
+        name = self.Name.split("::")[-1]  # Use the last part of the name, in case of nested enums
+        if name == "__unnamed":
+            name = "/* __unnamed */"
+        attr = "public"
+        s = "enum " + name + " {\n"
+        for e in self.fieldList.Type.Data:
+            if e.attr.access != attr:
+                s += f"//{e.attr.access}\n"
+                attr = e.attr.access
+            s += f"\t{e.Name} = {e.value.value},\n"
+        s += "};\n"
+        return s
+
 
 @TpRec(0x0008) # LF_PROCEDURE_16t
 class LfProcedure(TypeLeaf):

@@ -148,9 +148,16 @@ def dump_module(p, module, path):
 
         for ty, users in module.used_types.items():
             fwd = ""
+            nested = False
             if ty.is_fwdref():
                 #breakpoint()
                 fwd = " (forward reference)"
+            try:
+                if ty.properties.nested:
+                    fwd += " (nested type)"
+                    nested = True
+            except AttributeError:
+                pass
             f.write(f"// Type: {ty.typestr()}{fwd};\n")
             # f.write(f"// Used by:\n")
             # for user in users:
@@ -159,15 +166,14 @@ def dump_module(p, module, path):
             #     else:
             #         f.write(f"//   Global: {user.other} {user.mode}\n")
 
-
-            cls = getattr(ty, '_class', None)
-            cls = getattr(ty, '_def_class', cls)
-
-            if not cls:
-                f.write("\n")
+            if nested:
                 continue
 
-            f.write(cls.as_code())
+
+            try:
+                f.write(ty.as_code())
+            except AttributeError:
+                pass
             f.write("\n")
 
 
@@ -231,13 +237,20 @@ def dump_global(f, p, sym):
     if segment.va is None:
         return
     address = segment.va + sym.Offset
+    f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
 
-    if isinstance(sym, (codeview.GlobalData, codeview.PublicData)):
-        f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
-    elif isinstance(sym, codeview.LocalData):
-        f.write(f"// LOCAL: {p.exename} 0x{address:08x}\n")
+    item = p.getItem(address)
+    if item:
+        f.write(item.as_code())
+        f.write("\n")
+
     else:
-        print(f"Unknown symbol\n {sym}")
+        if isinstance(sym, (codeview.GlobalData, codeview.PublicData)):
+            f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
+        elif isinstance(sym, codeview.LocalData):
+            f.write(f"// LOCAL: {p.exename} 0x{address:08x}\n")
+        else:
+            print(f"Unknown symbol\n {sym}")
 
-    f.write(f"// {sym.Name}\n")
+        f.write(f"// {sym.Name}\n")
 

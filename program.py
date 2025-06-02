@@ -43,6 +43,23 @@ class Data(Item):
         self.ty = ty
         self.name = sym.Name
 
+    def as_code(self):
+        cls = getattr(self.ty, '_class', None)
+        cls = getattr(self.ty, '_def_class', cls)
+        s = self.ty.typestr(self.name)
+
+        try:
+            if not self.sym.contrib.is_bss():
+                s += f" = {{ /* <data@0x{self.address:08x}> */ }};\n"
+            else:
+                s += ";\n"
+        except AttributeError:
+            s += "; // Contrib missing\n"
+
+        return s
+
+
+
 class Usage:
     def __init__(self, ty, other, mode: TypeUsage):
         while True:
@@ -130,9 +147,11 @@ class Module:
                 g.contrib.register(g, g.Offset - g.contrib.Offset, 0)
             except AttributeError:
                 continue
-            item = Data(g, program.getAddr(g.Segment, g.Offset), program.types.types[g.Type])
+            ty = program.types.types[g.Type]
+            item = Data(g, program.getAddr(g.Segment, g.Offset), ty)
             if item.length:
                 program.items[item.address: item.address + item.length] = item
+            self.use_type(ty, item, TypeUsage.GlobalData)
 
         for sym in symbols or []:
             if isinstance(sym, (ObjName, CompileFlags)):

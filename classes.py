@@ -399,19 +399,9 @@ class Nested(Field):
                 #     case _:
                 #         print(f"Unknown nested type: {self.ty.__class__}")
                 #         breakpoint()
-            if isinstance(ty, tpi.LfClass):
-                return ty._class.as_code()
-            elif isinstance(ty, tpi.LfEnum):
-                attr = "public"
-                s = "\tenum " + self.name + " {\n"
-                for e in self.ty.fieldList.Type.Data:
-                    if e.attr.access != attr:
-                        s += f"\t//{e.attr.access}\n"
-                        attr = e.attr.access
-                    s += f"\t\t{e.Name} = {e.value.value},\n"
-                s += "\t};\n"
-                return s
-            else:
+            try:
+                return ty.as_code()
+            except AttributeError:
                 return f"// TODO: Unknown nested type: {self.ty.__class__}\n// {ty.typestr(self.name)}\n"
 
         # if not nested, this is a using statement
