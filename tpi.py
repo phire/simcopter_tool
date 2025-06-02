@@ -513,7 +513,10 @@ class LfClass(FrowardRef):
         cls = getattr(self, '_class', None)
         cls = getattr(self, '_def_class', cls)
         if cls is None:
-            return f"// {self.Name} Class implementation not found\n"
+            try:
+                cls = self._definition._class
+            except AttributeError:
+                return f"// {self.Name} Class implementation not found\n"
         return cls.as_code()
 
 
