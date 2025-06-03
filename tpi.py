@@ -571,13 +571,24 @@ class LfEnum(FrowardRef):
         name = self.Name.split("::")[-1]  # Use the last part of the name, in case of nested enums
         if name == "__unnamed":
             name = "/* __unnamed */"
-        attr = "public"
-        s = "enum " + name + " {\n"
+        access = "public"
+        typestr = ""
+        if self.utype.value != 0x74: # int32_t
+            typestr = f" /* {self.utype.Type.typestr()} */"
+
+        s = f"enum {name}{typestr} {{\n"
+        props = self.properties.str(map={"isnested": ''})
+        if props:
+            s += f"\t// properties: {self.properties}\n"
         for e in self.fieldList.Type.Data:
-            if e.attr.access != attr:
+
+            if e.attr.access != access:
                 s += f"//{e.attr.access}\n"
-                attr = e.attr.access
-            s += f"\t{e.Name} = {e.value.value},\n"
+                access = e.attr.access
+            attr = e.attr.str(map={'access': None})
+            if attr:
+                attr = f" // {attr}"
+            s += f"\t{e.Name} = {e.value.value},{attr}\n"
         s += "};\n"
         return s
 
