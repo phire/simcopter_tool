@@ -136,7 +136,7 @@ class Label:
     def __repr__(self):
         return f"Label({self.name})"
 
-class Function:
+class Function():
     def __init__(self, program, module, cv, lines, contrib):
         self.module = module
         self.source_file = module.sourceFile
@@ -411,11 +411,29 @@ class Function:
 
     def sig(self):
         args = [arg.as_code() for arg in self.args]
+        modifiers = ""
+        if isinstance(self.codeview, codeview.LocalProcedureStart):
+            modifiers += "static "
 
-        return f"{self.ret.typestr()} {self.name}({', '.join(args)})"
+        return f"{modifiers}{self.ret.typestr()} {self.name}({', '.join(args)})"
+
+    def is_synthetic(self):
+        if self.name.startswith("$E"):
+            return True
+        if isinstance(self.ty, tpi.LfMemberFunction):
+            field = self.ty._field
+            return field.synthetic
+        return False
+
+
 
     def as_code(self):
-        s = f"// FUNCTION: {self.p.exename} 0x{self.address:08x}\n"
+        s = "// SYNTHETIC: " if self.is_synthetic() else "// FUNCTION: "
+        if self.ty:
+            TI = self.ty.TI
+        else:
+            TI = 0
+        s += f"{self.p.exename} 0x{self.address:08x}\n"
 
         s += f"{self.sig()} {{\n"
         p = self.p

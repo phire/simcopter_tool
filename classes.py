@@ -15,11 +15,13 @@ def process_methods(c, methods, p, base=None):
             print("Unknown method type", method.index.Type.__class__)
             breakpoint()
             continue
-        mbr = MemberFunction(method, p)
+        method.Name = methods.Name
+        mbr = Method(method, p)
+        mbr.parent = c
+
 
         if base == c:
             method.index.Type.classtype.Type._def_class = base
-        mbr.name = methods.Name
         c.fields += [mbr]
 
 
@@ -34,7 +36,9 @@ def process_field(field, c, p, base_offset=0, base=None):
         case tpi.LfOneMethod:
             # otherwise we get a LfOneMethod, which is a single method.
             if not inherriting:
-                c.fields.append(Method(field, p))
+                method = Method(field, p)
+                method.parent = c
+                c.fields.append(method)
                 field.index.Type.classtype.Type._def_class = base
 
         case tpi.LfMember:
@@ -49,9 +53,12 @@ def process_field(field, c, p, base_offset=0, base=None):
 
             if not inherriting:
                 c.fields.append(m)
+                m.parent = c
         case tpi.LfStaticMember:
             if not inherriting:
-                c.fields.append(StaticMember(field, p))
+                m = StaticMember(field, p)
+                c.fields.append(m)
+                m.parent = c
         case tpi.LfBaseClass:
 
             bbase = BaseRef(field, p)
@@ -271,14 +278,21 @@ class BaseRef:
         #c.base_offset = c.offset
 
 class Field:
+    parent = None
     def __init__(self, field, p):
         try:
             self.name = field.Name
         except AttributeError:
             self.name = "<unknown>"
-        self.ty = field.index.Type
+        try:
+            self.ty = field.index.Type
+        except AttributeError:
+            pass
         self.access = field.attr.access
         self.attr = field.attr
+
+        self.synthetic = field.attr.compgenx
+        assert not (field.attr.pseudo or field.attr.noconstruct or field.attr.noinherit or field.attr.sealed)
 
     def attr_as_code(self):
         s = " "
@@ -304,7 +318,12 @@ class Member(Field):
 
     def as_code(self):
         c = self.attr_as_code()
-        c += f"{self.ty.typestr(self.name)};\n"
+        suffix = ""
+        if self.synthetic:
+            suffix = " // synthetic"
+
+        c += f"{self.ty.typestr(self.name)};{suffix}\n"
+
         return c
 
     def access_field(self, prefix, offset, size):
@@ -337,6 +356,8 @@ class Method(Field):
         self.func = func
         self.vtable = field.vbaseoffset
         # TODO: collect vtable offsets from base classes
+        func._field = self
+
 
     def as_code(self):
         c = self.attr_as_code()
@@ -354,16 +375,12 @@ class Method(Field):
         if self.attr.mprop != "vanilla":
             c += f"{self.attr.mprop} "
 
-        c += f"{self.func.rvtype.typestr()} {self.name}({args});\n"
+        suffix = ""
+        if self.synthetic:
+            suffix = " // synthetic"
+
+        c += f"{self.func.rvtype.typestr()} {self.name}({args});{suffix}\n"
         return c
-
-
-class MemberFunction(Method):
-    # I think member functions are constructors???
-    def __init__(self, method, p):
-        super().__init__(method, p)
-        self.conversion = self.func.rvtype.value != base_types.Void.TI
-        self.ctor = self.func.rvtype.value == base_types.Void.TI
 
 
 class Nested(Field):
@@ -410,19 +427,33 @@ class Nested(Field):
         return f"// todo: Nested {self.name} {self.ty.typestr()};\n"
 
 
-class VirtualBase(Member):
+class VirtualBase(Field):
     def __init__(self, field, p):
+
+        super().__init__(field, p)
         self.name = field.index.Type.Name
         self.ty = field.vbptr.Type
-        self.access = field.attr.access
-        self.attr = field.attr
         self.offset = field.ptroffset.value
+
+    def access_field(self, prefix, offset, size):
+        # todo: Special Access Base
+        prefix = AccessMember(prefix, self.name, self.ty)
+        return self.ty.access(prefix, offset, size)
+
+    def as_code(self):
+        c = self.attr_as_code()
+        c += f"{self.ty.typestr(self.name)};\n"
+        if self.synthetic:
+            c += f"// synthetic"
+        return c
+
 
 class VFTable(Member):
     def __init__(self, field, vtable, name, p):
         self.name = name
         self.ty = field.index.Type
         self.vtable = vtable
+        self.synthetic = True
 
     def access_field(self, prefix, offset, size):
         if (size is None or size == 4) and offset == 0:

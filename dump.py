@@ -22,7 +22,6 @@ def dump(p: Program, dest: str):
     # We would rather have them in the dump, so lets scan nearby symbols to try and gues what module
     # they belong to.
     for sym in p.unknownContribs:
-
         if override := simcopter.unknowns.get(sym.Name):
             # If we have an override, use that.
             p.modules[override].unknowns += [(sym, None)]
@@ -170,10 +169,8 @@ def dump_module(p, module, path):
                 continue
 
 
-            try:
+            if hasattr(ty, 'as_code'):
                 f.write(ty.as_code())
-            except AttributeError:
-                pass
             f.write("\n")
 
 

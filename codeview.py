@@ -240,6 +240,10 @@ class RefSym(ConstructClass):
         "Name"    /  PascalString(Int8ul, "ascii"),  # Hidden name that has been made a first class member
     )
 
+    def parsed(self, ctx):
+        assert self.SucOfName == 0, f"Unexpected SucOfName value {self.SucOfName} in {self.Name}"
+        assert self.Fill == 0, f"Unexpected Fill value {self.Fill} in {self.Name}"
+
     def getModuleId(self, program):
         return self.ModuleId
 
