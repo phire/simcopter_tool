@@ -16,7 +16,7 @@ def process_methods(c, methods, p, base=None):
             breakpoint()
             continue
         method.Name = methods.Name
-        mbr = Method(method, p)
+        mbr = Method(c, method, p)
         mbr.parent = c
 
 
@@ -36,7 +36,7 @@ def process_field(field, c, p, base_offset=0, base=None):
         case tpi.LfOneMethod:
             # otherwise we get a LfOneMethod, which is a single method.
             if not inherriting:
-                method = Method(field, p)
+                method = Method(c, field, p)
                 method.parent = c
                 c.fields.append(method)
                 field.index.Type.classtype.Type._def_class = base
@@ -106,6 +106,7 @@ def process_field(field, c, p, base_offset=0, base=None):
 
 class Class:
     def __init__(self, impl, p):
+        self.p = p
         self.impl = impl
         self.name = impl.Name
         self.size = impl.Size.value
@@ -188,6 +189,9 @@ class Class:
             c += textwrap.indent(field.as_code(), "\t")
 
         c += "};\n"
+
+        if self.vtable_data:
+            c = f"// VTABLE: {self.p.exename} {self.vtable_data.address:#010x}\n" + c
 
         return c
 
@@ -349,8 +353,9 @@ def args_as_code(f):
     return ", ".join(args)
 
 class Method(Field):
-    def __init__(self, field, p):
+    def __init__(self, c, field, p):
         super().__init__(field, p)
+        self.parent = c
 
         func = field.index.Type
         assert isinstance(func, tpi.LfMemberFunction)
@@ -360,11 +365,11 @@ class Method(Field):
         # TODO: collect vtable offsets from base classes
         func._field = self
 
+    def is_virtual(self):
+        return self.attr.mprop in ["virtual", "intro", "purevirt", "pureintro"]
 
     def as_code(self):
         c = self.attr_as_code()
-        if self.vtable is not None:
-            c += f"// vtable: {self.vtable}\n"
 
         #assert self.func.calltype == tpi.CallingConvention.ThisCall
         if self.func.calltype != tpi.CallingConvention.ThisCall:
@@ -374,14 +379,39 @@ class Method(Field):
             c += f"// funcattr: {self.func.funcattr}\n"
 
         args = args_as_code(self.func.args)
-        if self.attr.mprop != "vanilla":
-            c += f"{self.attr.mprop} "
+
+        pure = ""
+
+        match self.attr.mprop:
+          case "vanilla":
+            pass
+          case "virtual":
+            c += "virtual "
+            pure = " /* override */"
+          case "static":
+            c += "static "
+          case "friend":
+            c += "friend "
+          case "intro": # Implies MTvirtual. The "introduction" of this virtual function
+            c += "virtual "
+          case "purevirt":
+            c += "virtual "
+            pure = " = 0 /* override */"
+          case "pureintro": # likewise, implies MTpurevirt
+            c += "virtual "
+            pure = " = 0"
 
         suffix = ""
-        if self.synthetic:
-            suffix = " // synthetic"
+        if self.vtable is not None:
+            suffix += f"vtable+{self.vtable:#x}"
 
-        c += f"{self.func.rvtype.typestr()} {self.name}({args});{suffix}\n"
+        if self.synthetic:
+            suffix = "synthetic"
+
+        if suffix:
+            suffix = f" // {suffix}"
+
+        c += f"{self.func.rvtype.typestr()} {self.name}({args}){pure};{suffix}\n"
         return c
 
 
