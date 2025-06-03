@@ -69,6 +69,7 @@ class Gsi(ConstructClass):
     def apply_visablity(self, visablity, symbols):
         for sym in self.all_hashes:
             rec = symbols.fromOffset(sym.offset - 1)
+            assert rec.visablity is Visablity.Unknown
             if rec:
                 rec.visablity = visablity
                 rec.refcount = sym.refcount

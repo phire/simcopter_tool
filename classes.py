@@ -236,7 +236,8 @@ class BaseRef:
             if definition is not None:
                 self.ty = definition
             else:
-                print(f"Warning: BaseRef {self.name} is a forward reference, but has no definition.")
+                #print(f"Warning: BaseRef {self.name} is a forward reference, but has no definition.")
+                pass
         else:
             self.fwdref = False
 

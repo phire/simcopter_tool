@@ -21,6 +21,11 @@ class Include:
         self.functions = []
 
 class Item:
+    sym = None
+    export = None
+    address = None
+    name = None
+
     def __init__(self, sym, address):
         self.sym = sym
         self.address = address
@@ -363,17 +368,9 @@ class Program:
             idx = getModuleId(self)
             if idx:
                 module_globals[idx].append(sym)
-            else:
+            elif sym.Segment != 7:
+
                 self.extra_globals.append(sym)
-
-        for g in self.extra_globals:
-            if g.Segment == 7:
-                continue
-            # Todo: These are globals that are not in any module... for some reason
-
-            item = Data(g, self.getAddr(g.Segment, g.Offset), self.types.types[g.Type])
-            if item.length:
-                self.items[item.address: item.address + item.length] = item
 
         # process all modules
         for i, (modi, sources, contribs, symbols, lines) in enumerate(data.modules):
@@ -394,12 +391,45 @@ class Program:
             self.modules.append(m)
             library.addModule(m)
 
+    def post_process(self):
+        for g in self.extra_globals:
+            if isinstance(g, GlobalData):
+                # Todo: These are globals that are not in any module... for some reason
+                addr = address = self.getAddr(g.Segment, g.Offset)
+                item = self.getItem(addr)
+                if item:
+                    continue
+                    print("GlobalData {g.Name} already exists at {addr:#010x}")
+                    print(g)
+                    print(item.sym)
+                    new_type = self.types.types[g.Type]
+                    if item.ty.TI != new_type.TI:
+                        print(f"Type mismatch: {item.ty.typestr()} != {new_type.typestr()}")
+                        print(new_type)
+                        print(item.ty)
+                    breakpoint()
+
+
+                item = Data(g, addr, self.types.types[g.Type])
+                if item.length:
+                    self.items[item.address: item.address + item.length] = item
+            if isinstance(g, LocalData):
+                print(f"LocalData {g.Name} in extra_globals, this should not happen")
+
+        for g in self.extra_globals:
+            if isinstance(g, PublicData):
+                # This is an exported global
+                address = self.getAddr(g.Segment, g.Offset)
+                item = self.getItem(address)
+                if not item:
+                    print(f"Warning: Trying to export {g.Name} @ {address:#010x}, but it does not exist")
+                else:
+                    item.export = g
+
 
         for m in self.modules:
-
             for item in m.all_items:
                 item.post_process()
-
 
 
     def getInclude(self, filename):
@@ -455,9 +485,6 @@ class Symbols:
                 types.types[ty].symbols.append(rec)
             except AttributeError:
                 pass
-
-
-
 
     def fromOffset(self, offset):
         try:

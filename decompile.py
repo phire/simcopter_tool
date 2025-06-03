@@ -78,6 +78,14 @@ if __name__ == "__main__":
     elapsed = int((time.time() - now) * 1000)
     print(f"done, {elapsed} ms", file=sys.stderr)
 
+    print("post-processing...    ", file=sys.stderr, end='', flush=True)
+    now = time.time()
+
+    p.post_process()
+
+    elapsed = int((time.time() - now) * 1000)
+    print(f"done, {elapsed} ms", file=sys.stderr)
+
     game = p.libraries["game.lib"]
     police = game.modules["s3police.cpp"]
     createfn = police.functions["PoliceCarClass::CreateInstance"]
