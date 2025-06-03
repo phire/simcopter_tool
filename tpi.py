@@ -117,10 +117,13 @@ class TypeIndex(ConstructValueClass):
         return self.Type.getCon()
 
 class Bitfield(ConstructClass):
-    def __str__(self):
+    def str(self, *, map={}):
+        # to rename a feld, use map = {"old_name": "new_name"}
+        # to filter out a field, use map = {"field_name": False}} (or None or "")
         attrs = []
         for k, v in self.items():
-            if k.startswith("_"):
+            k = map.get(k, k) # filter or rename field names
+            if not k or k.startswith("_"):
                 continue
             if v is True:
                 attrs.append(k)
@@ -130,12 +133,16 @@ class Bitfield(ConstructClass):
                 attrs.append(f"padding({int(v)})")
         return " ".join(attrs)
 
+    def __str__(self):
+        return self.str()
+
     # Override for a slight performance improvement
     @classmethod
     def _parse(cls, stream, context, path):
         obj = cls.subcon._parse(stream, context, path)
         self = cls.__new__(cls)
         self._apply(obj)
+        del self._io
 
         return self
 
@@ -243,13 +250,9 @@ class LfModifier(TypeLeaf):
         return self.Type.Type.con
 
     def mods(self):
-        s = ""
-        if self.Attributes.unaligned:
-            s = f"unaligned {s}"
-        if self.Attributes.const:
-            s = f"const {s}"
-        if self.Attributes.volatile:
-            s = f"volatile {s}"
+        s = self.Attributes.str()
+        if s:
+            s += " "
         return s
 
     def __str__(self):
@@ -267,56 +270,60 @@ class LfModifier(TypeLeaf):
     def initializer(self, parsed):
         return self.Type.Type.initializer(parsed)
 
+class PointerAttributes(Bitfield):
+    subcon = FixedSized(2,
+        BitStruct(
+            "ptrmode" / Enum(BitsInteger(3),
+                Ptr=0,
+                Ref=1,
+                PMem=2,
+                PMFunc=3,
+                Reserved=4,
+            ),
+            "ptrtype" / Enum(BitsInteger(5),
+                PtrNear = 0,
+                PtrFar = 1,
+                PtrHuge = 2,
+                PtrBaseSeg = 3,
+                PtrBaseVal = 4,
+                PtrBaseSegVal = 5,
+                PtrBaseAddr = 6,
+                PtrBaseSegAddr = 7,
+                PtrBaseType = 8,
+                PtrBaseSelf = 9,
+                PtrNear32 = 10,
+                PtrFar32 = 11,
+                Ptr64 = 12,
+                PtrUnused = 13,
+            ),
+            Padding(4),
+            "isunaligned" / Flag, # unaligned pointer
+            "isconst" / Flag, # const pointer
+            "isvolatile" / Flag, # volatile pointer
+            "isflat32" / Flag, # flat model pointer
+        ))
+
 @TpRec(0x0002) # LF_POINTER_16t
 class LfPointer(TypeLeaf):
     subcon = Struct(
-        "Attributes" / FixedSized(2,
-            BitStruct(
-                "ptrmode" / Enum(BitsInteger(3),
-                    Ptr=0,
-                    Ref=1,
-                    PMem=2,
-                    PMFunc=3,
-                    Reserved=4,
-                ),
-                "ptrtype" / Enum(BitsInteger(5),
-                    PtrNear = 0,
-                    PtrFar = 1,
-                    PtrHuge = 2,
-                    PtrBaseSeg = 3,
-                    PtrBaseVal = 4,
-                    PtrBaseSegVal = 5,
-                    PtrBaseAddr = 6,
-                    PtrBaseSegAddr = 7,
-                    PtrBaseType = 8,
-                    PtrBaseSelf = 9,
-                    PtrNear32 = 10,
-                    PtrFar32 = 11,
-                    Ptr64 = 12,
-                    PtrUnused = 13,
-                ),
-                Padding(4),
-                "isunaligned" / Flag,
-                "isconst" / Flag,
-                "isvolatile" / Flag,
-                "isflat32" / Flag,
-            )
-        ),
+        "Attributes" / PointerAttributes,
         "Type" / TypeIndex,
     )
 
     def attributes(self):
         s = ""
         if self.Attributes.ptrtype != "PtrNear32":
-            s = f"{self.Attributes.ptrtype} {s}"
-        if self.Attributes.isunaligned:
-            s = f"unaligned {s}"
-        if self.Attributes.isconst:
-            s = f"const {s}"
-        if self.Attributes.isvolatile:
-            s = f"volatile {s}"
-        if self.Attributes.isflat32:
-            s = f"flat32 {s}"
+            s = f"{self.Attributes.ptrtype}"
+        s += self.Attributes.str(map={
+            "ptrmode": None,
+            "ptrtype": None,
+            "isunaligned": 'unaligned',
+            "isconst": 'const',
+            "isvolatile": 'volatile',
+            "isflat32": 'flat32',
+        })
+        if s:
+            s += " "
         return s
 
     def shortstr(self):

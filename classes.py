@@ -301,16 +301,8 @@ class Field:
         assert not (field.attr.pseudo or field.attr.noconstruct or field.attr.noinherit or field.attr.sealed)
 
     def attr_as_code(self):
-        s = " "
-        if self.attr.noconstruct:
-            s += "noconstruct "
-        if self.attr.noinherit:
-            s += "noinherit "
-        if self.attr.pseudo:
-            s += "pseudo "
-        if self.attr.sealed:
-            s += "sealed "
-        if s != " ":
+        s = self.attr.str(map={'access': '', 'mprop': '', 'compgenx': ''})
+        if s != "":
             return "//" + s + "\n"
         return ""
 
