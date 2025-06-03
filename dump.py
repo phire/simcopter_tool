@@ -6,6 +6,7 @@ import sys, os
 import simcopter
 import codeview
 import tpi
+from item import Data
 
 
 from collections import defaultdict
@@ -158,12 +159,14 @@ def dump_module(p, module, path):
             except AttributeError:
                 pass
             f.write(f"// Type: {ty.typestr()}{fwd};\n")
-            # f.write(f"// Used by:\n")
-            # for user in users:
-            #     if isinstance(user, Function):
-            #         f.write(f"//   Function: {user.other} {user.mode}\n")
-            #     else:
-            #         f.write(f"//   Global: {user.other} {user.mode}\n")
+
+            # if ty.is_fwdref() and not ty._definition:
+            #     f.write(f"// Used by:\n")
+            #     for user in users:
+            #         if isinstance(user, Function):
+            #             f.write(f"//   Function: {user.other} {user.mode}\n")
+            #         else:
+            #             f.write(f"//   Global: {user.other} {user.mode}\n")
 
             if nested:
                 continue
@@ -217,7 +220,7 @@ def dump_module(p, module, path):
                         f.write(f"// FUNCTION: {p.exename} 0x{address:08x}\n")
                         breakpoint()
                     else:
-                        dump_global(f, p, sym)
+                        dump_global(f, p, sym, contrib)
 
         if module.unknowns:
             f.write("\n\n// Unknown globals:\n")
@@ -226,28 +229,32 @@ def dump_module(p, module, path):
         for sym, other in module.unknowns:
             if other:
                 f.write("\n// WARNING: this global might actually belong to: " + other + "\n")
-            dump_global(f, p, sym)
+            dump_global(f, p, sym, sym.contrib)
 
 
-def dump_global(f, p, sym):
+def dump_global(f, p, sym, contrib):
     segment = p.sections[sym.Segment]
     if segment.va is None:
         return
     address = segment.va + sym.Offset
-    f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
+
 
     item = p.getItem(address)
     if item:
+        if isinstance(item, Data):
+            f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
         f.write(item.as_code())
         f.write("\n")
 
     else:
-        if isinstance(sym, (codeview.GlobalData, codeview.PublicData)):
-            f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
-        elif isinstance(sym, codeview.LocalData):
-            f.write(f"// LOCAL: {p.exename} 0x{address:08x}\n")
-        else:
-            print(f"Unknown symbol\n {sym}")
+        name = pydemangler.demangle(sym.Name)
+        f.write(f"// GLOBAL: {p.exename} 0x{address:08x}\n")
+        if name and name != sym.Name:
+            f.write(f"// Demangled: {name}\n")
 
+            if sym.Type:
+                ty = p.types.types[sym.Type]
+
+                print(ty)
         f.write(f"// {sym.Name}\n")
 

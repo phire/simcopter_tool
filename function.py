@@ -5,6 +5,7 @@ import base_types
 import codeview
 from intervaltree import IntervalTree
 
+from item import Item
 import tpi
 import x86
 import pydemangler
@@ -136,7 +137,7 @@ class Label:
     def __repr__(self):
         return f"Label({self.name})"
 
-class Function():
+class Function(Item):
     def __init__(self, program, module, cv, lines, contrib):
         self.module = module
         self.source_file = module.sourceFile
@@ -275,12 +276,6 @@ class Function():
     def post_process(self):
         if self.contrib:
             self.parse_body()
-
-    def data(self):
-        contrib, offset = self.contrib
-        length = self.length
-        return contrib._data[offset: offset+length]
-
 
     def disassemble(self):
         data = self.data()
@@ -514,6 +509,7 @@ class Function():
     def __repr__(self):
         return f"Function({self.sig()}, {self.address:#x})"
 
+
 def find_type(p, func):
     if not func.codeview:
         return None
@@ -618,7 +614,7 @@ class Scope:
             offset = addr - item.address
             if not offset and offset_expr is not None:
                 offset = offset_expr
-            return item.ty.access(item.name, offset, size)
+            return item.access(item.name, offset, size)
         return None
 
     def code_access(self, pc, addr):

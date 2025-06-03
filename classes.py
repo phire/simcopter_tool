@@ -119,6 +119,8 @@ class Class:
 
         self.vtable = None
         self.vtable_shape = None
+        self.vtable_data = None
+
         if isinstance(impl, tpi.LfStruct):
             self.is_struct = True
         else:

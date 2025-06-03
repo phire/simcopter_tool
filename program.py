@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from function import Function, TypeUsage
 from classes import parse_classes
+from item import Item, Data, StringLiterial, ThunkItem, VFTable
 
 def ext(filename : str):
     try:
@@ -19,79 +20,6 @@ class Include:
         self.filename = filename
         self.modules = []
         self.functions = []
-
-class Item:
-    sym = None
-    export = None
-    address = None
-    name = None
-
-    def __init__(self, sym, address):
-        self.sym = sym
-        self.address = address
-        self.length = sym.Len
-        self.name = sym.Name
-
-    def post_process(self):
-        # This is called after the module has been fully processed
-        # and all symbols have been linked to types
-        pass
-
-    def data(self):
-        try:
-            contrib = self.sym.contrib
-            offset = self.sym.contribOffset
-            length = self.length
-            return contrib._data[offset: offset+length]
-        except AttributeError:
-            return None
-
-class Data(Item):
-    def __init__(self, sym, address, ty):
-        self.sym = sym
-        self.address = address
-        try:
-            self.length = ty.type_size()
-        except:
-            self.length = 1
-        self.ty = ty
-        self.name = sym.Name
-
-    def initializer(self):
-        if self.ty.getCon() is None:
-            # If there is no construct, we cannot initialize it
-            return "{ 0 /* todo */ }"
-        if (data := self.data()) is None:
-            return "{ 0 /* error */ }"
-
-        parsed = self.ty.getCon().parse(data)
-
-        return self.ty.initializer(parsed)
-
-    def as_code(self):
-        cls = getattr(self.ty, '_class', None)
-        cls = getattr(self.ty, '_def_class', cls)
-        s = self.ty.typestr(self.name)
-
-        if isinstance(self.sym, LocalData):
-            s = f"static {s}"
-
-        if self.sym.visablity == Visablity.Public:
-            s = f"extern {s}"
-
-        try:
-            is_bss = self.sym.contrib.is_bss()
-        except AttributeError:
-            s += "; // Contrib missing\n"
-            return s
-        if not is_bss:
-            s += f" = {self.initializer()};\n"
-        else:
-            s += ";\n"
-
-        return s
-
-
 
 class Usage:
     def __init__(self, ty, other, mode: TypeUsage):
@@ -191,11 +119,33 @@ class Module:
                 g.contrib.register(g, g.Offset - g.contrib.Offset, 0)
             except AttributeError:
                 continue
+
+            address = program.getAddr(g.Segment, g.Offset)
+
             ty = program.types.types[g.Type]
-            item = Data(g, program.getAddr(g.Segment, g.Offset), ty)
+            if g.Type != 0:
+
+                item = Data(g, address, ty)
+            elif g.Name.startswith('??_C'): # work out type based on name mangling
+                item = StringLiterial(g, address)
+            elif g.Name.startswith('??_7'):
+                item = VFTable(g, address, program)
+
+            elif isinstance(g, PublicData):
+                continue
+                breakpoint()
+                item = Data(g, address, None)
+            elif g.Name.startswith('$S'):
+                continue
+            else:
+                breakpoint()
+
             if item.length:
                 program.items[item.address: item.address + item.length] = item
+            self.all_items += [item]
             self.use_type(ty, item, TypeUsage.GlobalData)
+
+
 
         for sym in symbols or []:
             if isinstance(sym, (ObjName, CompileFlags)):
@@ -233,7 +183,7 @@ class Module:
                     except KeyError:
                         pass
             elif isinstance(sym, Thunk):
-                self.functions[sym.Name] = Item(sym, program.getAddr(sym.Segment, sym.Offset))
+                self.functions[sym.Name] = ThunkItem(sym, program.getAddr(sym.Segment, sym.Offset))
             elif isinstance(sym, CodeLabel):
                 # These only show up in libc, so just ignore those
                 if self.library.name in ("LIBCMTD.lib"):
