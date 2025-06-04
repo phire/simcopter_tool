@@ -342,8 +342,8 @@ class LfPointer(TypeLeaf):
                     s = f"{fn.rvtype.typestr()} (*{name})({', '.join(str(arg.typestr()) for arg in fn.args)})"
                 else:
                     if name:
-                        #name = "*" + name
-                        s = f"{self.Type.typestr()}* {name}"
+                        name = "*" + name
+                        s = f"{self.Type.typestr(name)}"
                     else:
                         s = f"{self.Type.typestr()}*"
             case "Ref":
