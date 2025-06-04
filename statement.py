@@ -35,7 +35,7 @@ class Assign(Statement):
         return f"Assign({self.target}, {self.value})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()} = {self.value.as_rvalue()}"
+        return f"{self.target.as_lvalue()} = {self.value.as_rvalue()};"
 
     def __bool__(self):
         return self.target.is_known() and self.value.is_known()
@@ -50,7 +50,7 @@ class Modify(Assign):
         return f"Modify({self.op}, {self.target}, {self.value})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()} {self.op}= {self.value.as_rvalue()}"
+        return f"{self.target.as_lvalue()} {self.op}= {self.value.as_rvalue()};"
 
 
 
@@ -62,7 +62,7 @@ class Increment(Statement):
         return f"Increment({self.target})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()}++"
+        return f"{self.target.as_lvalue()}++;"
 
 class Decrement(Statement):
     def __init__(self, target):
@@ -72,7 +72,7 @@ class Decrement(Statement):
         return f"Decrement({self.target})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()}--"
+        return f"{self.target.as_lvalue()}--;"
 
 
 def match_statement(bblock):
@@ -83,28 +83,49 @@ def match_statement(bblock):
 
     head = stmt = None
     match bblock.effects:
-        case [*head, I("mov", (Mem() as mem, Expression() as expr))]:
+        case [*head, I("mov", (Mem() as mem, Expression() as expr)) as i]:
             stmt = Assign(mem, expr)
-        case [*head, I("add", (Expression() as expr, Mem() as mem))]:
+        case [*head, I("add", (Expression() as expr, Mem() as mem)) as i]:
             stmt = Modify("+", mem, expr)
-        case [*head, I("sub", (Expression() as expr, Mem() as mem))]:
+        case [*head, I("sub", (Expression() as expr, Mem() as mem)) as i]:
             stmt = Modify("-", mem, expr)
-        case [*head, I("inc", (Mem() as mem,))]:
+        case [*head, I("inc", (Mem() as mem,)) as i]:
             stmt = Increment(mem)
-        case [*head, I("dec", (Mem() as mem,))]:
+        case [*head, I("dec", (Mem() as mem,)) as i]:
             stmt = Decrement(mem)
 
     if not stmt:
         return None
 
-    print(f"function: {bblock.dbg_name()}")
-    for inst in bblock.insts:
-        print(f"  {inst}")
-    print(f"matched: {stmt}")
-    #try:
-    print(f"  code: {stmt.as_code()}")
+    used = set([i])
+    def collect_used(expr):
+        nonlocal used
+        if expr.inst:
+            used.add(expr.inst)
 
-    #breakpoint()
+    stmt.target.visit(collect_used)
+    if hasattr(stmt, 'value'):
+        stmt.value.visit(collect_used)
+
+    try:
+        stmt.as_code()
+    except:
+        # for now, just ignore statements that cannot be converted to code
+        return None
+
+    if all([x in used for x in bblock.insts]):
+        return stmt
+
+    # print(f"function: {bblock.dbg_name()}")
+    # for inst in bblock.insts:
+    #     usedstr = " <not used>" if inst not in used else ""
+    #     print(f"  {inst}{usedstr}")
+    # if all([x in used for x in bblock.insts]):
+    #     print(f"matched: {stmt}")
+
+    #     print(f"  code: {stmt.as_code()}")
+    # else:
+    #     print(f"not matched: {stmt}")
 
     return None
 

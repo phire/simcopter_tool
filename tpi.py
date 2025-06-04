@@ -1,6 +1,6 @@
 
 from construct import *
-from access import Access, ArrayAccess
+from access import Access, AccessPointer, ArrayAccess
 from base_types import cast_access, ScaleExpr
 from constructutils import *
 
@@ -377,9 +377,9 @@ class LfPointer(TypeLeaf):
     def deref(self, prefix, offset, size):
         match self.Attributes.ptrmode:
             case "Ptr":
-                prefix += "->"
+                prefix = AccessPointer(prefix, True)
             case "Ref":
-                prefix += "."
+                prefix = AccessPointer(prefix, False)
             case _:
                 raise NotImplementedError(f"Dereference not implemented for {self.Attributes.ptrmode}")
         return self.Type.access(prefix, offset, size)

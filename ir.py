@@ -4,6 +4,7 @@ from base_types import ScaleExpr
 scope = None
 
 class Expression:
+    inst = None
 
     def is_known(self):
         return True
@@ -13,6 +14,12 @@ class Expression:
 
     def as_asm(self):
         return self.as_code()
+
+    def visit(self, fn):
+        fn(self)
+        for expr in self.__dict__.values():
+            if isinstance(expr, Expression):
+                expr.visit(fn)
 
 class LValue(Expression):
     def __init__(self):
@@ -168,11 +175,9 @@ class Mem(LValue):
             return access.deref(offset, self.size)
 
         elif self.disp and not self.index:
-            breakpoint()
             return self.scope.data_access(self.disp, self.size)
-        else:
-            breakpoint()
-        breakpoint()
+
+        raise ValueError("Cannot convert indexed Mem to LValue")
 
     def as_asm(self):
         access = None
@@ -323,6 +328,7 @@ class BinaryOp(RValue):
     def __repr__(self):
         return f"BinaryOp({self.op}, {self.left}, {self.right})"
 
+
 class UnaryOp(RValue):
     __match_args__ = ("op", "operand")
     def __init__(self, op, operand):
@@ -331,6 +337,17 @@ class UnaryOp(RValue):
 
     def __repr__(self):
         return f"UnaryOp({self.op}, {self.operand})"
+
+
+class NulOp(RValue):
+    def __init__(self, op):
+        self.op = op
+
+    def __repr__(self):
+        return f"NulOp({self.op})"
+
+    def collect_insts(self, lst):
+        pass
 
 class FunctionRef:
     def __init__(self, fn):
@@ -523,7 +540,7 @@ def modifies_reg(inst, mnenomic, operands):
             return operands[0], UnaryOp(mnenomic, operands[0])
         elif info.op0_access == OpAccess.WRITE:
             # eg pop reg
-            return operands[0], mnenomic
+            return operands[0], NulOp(mnenomic)
 
         return None
 
@@ -550,6 +567,7 @@ class I:
         ir = I(mnemonic, operands, inst)
         if modifies:
             reg, expr = modifies
+            expr.inst = ir
             state.reg[reg.reg] = Reg(reg.reg, expr, ir)
 
         return ir
@@ -558,6 +576,9 @@ class I:
         # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
         info = info_factory.info(self.inst)
         effects = []
+        if self.inst.op0_kind == OpKind.NEAR_BRANCH32:
+            # branches are always side-effecting
+            effects.append("branch")
         for mem in info.used_memory():
             if mem.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
                 effects.append("memory")
@@ -591,8 +612,8 @@ class I:
                 ops.append(formatter.format_operand(self.inst, i))
 
         if ops:
-            return f"\t__asm        {self.mnenomic:6} {", ".join(ops)};\n"
-        return f"\t__asm        {self.mnenomic};\n"
+            return f"__asm        {self.mnenomic:6} {", ".join(ops)};"
+        return f"__asm        {self.mnenomic};"
 
 class State:
     def __init__(self):

@@ -392,15 +392,12 @@ class Function(Item):
         self.body = bblocks
 
         for bblock in self.body:
-            continue
-            if isinstance(labels and labels[0], (SwitchPointers, SwitchTable)):
+            if isinstance(bblock, (SwitchPointers, SwitchTable)):
                 # skip switch tables
                 continue
             stmt = match_statement(bblock)
             if stmt:
-                for inst in insts:
-                    print(inst.as_code(), end="")
-                print(f"Statement: {stmt}")
+                bblock.insts = [stmt]
                 #breakpoint()
 
 
@@ -495,7 +492,7 @@ class Function(Item):
                 s += "\n"
 
             for inst in insts:
-                s += inst.as_code()
+                s += f"\t{inst.as_code()}\n"
 
         if s[-2:] == "\n\n":
             s = s[:-1]

@@ -19,7 +19,6 @@ def process_methods(c, methods, p, base=None):
         mbr = Method(c, method, p)
         mbr.parent = c
 
-
         if base == c:
             method.index.Type.classtype.Type._def_class = base
         c.fields += [mbr]
@@ -207,6 +206,7 @@ class Class:
         # todo: For some reason these classes have multiple members at the same offset.
         #       I think this is correct, but I don't know why.
         if len(m) > 1 and self.name not in ["_DDBLTFX", "_DDPIXELFORMAT", "Behavior::Node"]:
+            raise ValueError(f"Multiple members at offset {offset:#x} in class {self.name}: {[m.data.name for m in m]}")
             breakpoint()
         m = m.pop()
 
