@@ -41,8 +41,10 @@ class Item:
         return self.ty.access(prefix, offset, size)
 
 class Data(Item):
-    def __init__(self, sym, address, ty):
+    def __init__(self, sym, address, ty, contrib=None):
         super().__init__(sym, address, ty)
+        if contrib is not None:
+            self.contrib = contrib
 
     def initializer(self):
         if self.ty.getCon() is None:
@@ -63,11 +65,11 @@ class Data(Item):
         if isinstance(self.sym, codeview.LocalData):
             s = f"static {s}"
 
-        if self.sym.visablity == Visablity.Public:
+        if getattr(self.sym, 'visablity', None) == Visablity.Public:
             s = f"extern {s}"
 
         try:
-            is_bss = self.sym.contrib.is_bss()
+            is_bss = self.contrib[0].is_bss()
         except AttributeError:
             s += "; // Contrib missing\n"
             return s

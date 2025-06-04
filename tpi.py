@@ -418,7 +418,10 @@ class LfArray(TypeLeaf):
 
     def typestr(self, name=None):
         element_size = self.Type.type_size()
-        count = self.Size.value // element_size
+        try:
+            count = f"{self.Size.value // element_size}"
+        except ZeroDivisionError:
+            count = f"{self.Size.value} / sizeof({self.Type.typestr()})"
 
         if name:
             name = f"{name}[{count}]"
@@ -430,10 +433,13 @@ class LfArray(TypeLeaf):
 
     def access(self, prefix, offset, size):
         element_size = self.Type.type_size()
+
         if isinstance(offset, ScaleExpr):
             index = offset.expr
             var_off = 0
         else:
+            # if element_size == 0:
+            #     raise ValueError(f"Cannot access array {self.shortstr()} with element size of 0")
             index = offset // element_size
             var_off = offset - index * element_size
 
@@ -496,10 +502,18 @@ class LfClass(FrowardRef):
 
     def type_size(self):
         if self.properties.fwdref:
+            cls = getattr(self, '_class', None)
+            cls = getattr(self, '_def_class', cls)
+            if cls:
+                return cls.size
             try:
                 return self._definition.type_size()
             except AttributeError:
                 raise Exception(f"Forward reference {self.Name} has no definition")
+            if self._definition:
+                self._definition.type_size()
+            else:
+                raise ValueError(f"Cannot get size of forward reference {self.Name}")
         return self.Size.value
 
     def get_class(self):

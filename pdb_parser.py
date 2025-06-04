@@ -88,6 +88,9 @@ class SectionContrib(ConstructClass):
     def is_bss(self):
         return self.Characteristics & 0x00000080
 
+    def is_readonly(self):
+        return self.Characteristics & 0x80000000 == 0
+
     def __str__(self):
         return f"{self.Section}:{self.Offset:08x}-{self.Offset+self.Size-1:08x} Module: {self.ModuleIndex}, {self.characteristicsString()}"
 

@@ -5,7 +5,7 @@ import base_types
 import codeview
 from intervaltree import IntervalTree
 
-from item import Item
+from item import Data, Item
 import tpi
 import x86
 import pydemangler
@@ -129,44 +129,33 @@ class SwitchPointers:
     def access(self, name, offset, size):
         return Access(size, f"{name}[{offset}]", None, offset=offset)
 
-
-
-def cv_string(c):
-    if isinstance(c, codeview.BpRelative):
-        if c.Offset > 0:
-            return "" # skip args
-        if c.Name in ["this"]:
-            return ""
-        ty = c.Type
-        return f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
-    elif isinstance(c, codeview.LocalData):
-
-
-        ty = c.Type
-        if c.Name and c.Type:
-            return f"\tstatic const {ty.typestr(c.Name)} = {{ /* todo */ }};\n"
-    elif isinstance(c, codeview.UserDefinedType):
-        ty = c.Type
-        return f"\t typedef {ty.typestr(c.Name)};\n"
-    return ""
-
 class BlockStart:
-    def __init__(self, cv):
+    def __init__(self, cv, scope):
         self.cv = cv
         self.offset = cv.Offset
         self.length = cv.Length
         self.name = cv.Name
         self._children = cv._children
-        self.scope = None  # will be set later
+        self.scope = scope
 
     def __repr__(self):
         return f"BlockStart({self.name}, {self.offset:#x}, {self.length})"
 
     def as_code(self):
         s = f"// Block start:\n"
-        for c in self.cv._children:
-            s += cv_string(c)
+        s += self.scope.locals_as_code()
         return s
+
+class BlockEnd:
+    def __init__(self, block, scope):
+        self.block = block
+        self.parent_scope = scope
+
+    def __repr__(self):
+        return f"BlockEnd({self.block.Name}, {self.block.Offset:#x}, {self.block.Length})"
+
+    def as_code(self):
+        return f"// Block end:\n"
 
 class Label:
     def __init__(self, name):
@@ -224,8 +213,9 @@ class Function(Item):
             self.labels[offset].append(Line(offset, line))
 
         self.scope = Scope(self.codeview, self.p, self)
+        scopes = []
 
-        def HandleChild(child):
+        def HandleChild(child, scope):
             nonlocal self, module
 
             match child:
@@ -244,10 +234,11 @@ class Function(Item):
                 case codeview.BlockStart():
                     address = program.getAddr(child.Segment, child.Offset)
                     offset = address - self.address
-                    self.labels[offset].append(BlockStart(child))
-                    self.labels[offset + child.Length].append(BlockEnd(child))
+                    new_scope = Scope(child, program, self, scope)
+                    self.labels[offset].append(BlockStart(child, new_scope))
+                    self.labels[offset + child.Length].append(BlockEnd(child, scope))
                     for inner_child in child._children:
-                        HandleChild(inner_child)
+                        HandleChild(inner_child, new_scope)
                 case codeview.LocalData():
                     address = program.getAddr(child.Segment, child.Offset)
                     if not child.Type and child.Name == "":
@@ -266,8 +257,8 @@ class Function(Item):
                     self.labels[offset].append(Label(child.Name))
 
 
-        for x in self.codeview._children:
-            HandleChild(x)
+        for x in self.codeview.children():
+            HandleChild(x, self.scope)
 
         if self.ty:
             if self.args and isinstance(self.ty, tpi.LfMemberFunction) and self.ty.calltype != tpi.CallingConvention.ThisCall and self.args[0].name == "this":
@@ -379,10 +370,8 @@ class Function(Item):
 
 
     def parse_body(self):
-        scopes = []
+        ir.set_scope(self.scope)
         scope = self.scope
-
-        ir.set_scope(scope)
 
         raw_lines = self.disassemble()
         bblocks = []
@@ -390,12 +379,10 @@ class Function(Item):
             skip = False
             for label in labels:
                 if isinstance(label, BlockStart):
-                    scopes.append(scope)
-                    scope = Scope(label.cv, self.p, self, scope)
-                    label.scope = scope
-                    ir.set_scope(scope)
+                    scope = label.scope
+                    ir.set_scope(label.scope)
                 elif isinstance(label, BlockEnd):
-                    scope = scopes.pop()
+                    scope = label.parent_scope
                     ir.set_scope(scope)
                 elif isinstance(label, (SwitchPointers, SwitchTable)):
                     skip = True
@@ -471,11 +458,7 @@ class Function(Item):
         s += f"{self.sig()} {{\n"
         p = self.p
 
-        intro = ""
-
-
-        for c in self.codeview._children:
-            intro += cv_string(c)
+        intro = self.scope.locals_as_code()
 
         if intro:
             s += intro + "\n"
@@ -498,16 +481,7 @@ class Function(Item):
             labels = bb.labels
             insts = bb.insts
             for label in labels:
-                if isinstance(label, BlockStart):
-                    s += f"// Block start:\n"
-                    for c in label.cv._children:
-                        s += cv_string(c)
-                if isinstance(label, BlockEnd):
-                    s += f"// Block end:\n"
-                if isinstance(label, Label):
-                    s += f"{label.name}:\n"
-                if isinstance(label, Line) and label.line is not None:
-                    s += f"// LINE {label.line:d}:\n"
+                s += label.as_code()
             if not labels:
                 s += "\n"
 
@@ -526,15 +500,6 @@ class Function(Item):
     def __repr__(self):
         return f"Function({self.sig()}, {self.address:#x})"
 
-class BlockEnd:
-    def __init__(self, block):
-        self.block = block
-
-    def __repr__(self):
-        return f"BlockEnd({self.block.Name}, {self.block.Offset:#x}, {self.block.Length})"
-
-    def as_code(self):
-        return f"// Block end:\n"
 
 class Scope:
     def __init__(self, cv, p, fn, outer=None):
@@ -545,42 +510,48 @@ class Scope:
             self.stack = IntervalTree()
             self.staticlocals = IntervalTree()
 
-        def info(p, c):
-            ty = c.Type
-            try:
-                size = ty.type_size()
-            except:
-                size = 0
-            if not size:
-                print(f"Warning: Type {ty} has no size, using 4")
-                size = 4
-            return (c.Offset, c.Offset + size, c.Name, ty)
-
-        stack = [info(p, c) for c in cv._children if isinstance(c, codeview.BpRelative)]
-        for start, end, name, ty in stack:
-            self.stack[start:end] = (name, ty)
-
-        def handle_staticlocal(c):
-            nonlocal p, self
-            if not c.Type and c.Name == "":
-                return
-            addr = p.getAddr(c.Segment, c.Offset)
-            ty = c.Type
-            size = ty.type_size()
-
-            if size == 0:
-                # todo: get size from somewhere else?
-                size = 1
-
-            self.staticlocals[addr:addr + size] = (c.Name, ty)
+        self.locals = [] # local declarations for this block
 
         for c in cv._children:
-            if isinstance(c, codeview.LocalData):
-                handle_staticlocal(c)
+            if isinstance(c, codeview.BpRelative): # args and locals
+                try: size = max(4, c.Type.type_size())
+                except: size = 4
+
+                start, end = c.Offset, c.Offset + size
+
+                self.stack[start:end] = (c.Name, c.Type)
+                if start < 0 and c.Name not in ["this", "__$ReturnUdt", "$initVBases"]:
+                    self.locals.append(("", c.Name, c.Type, None))
+            elif isinstance(c, codeview.LocalData): # static locals
+                if not c.Type and c.Name == "": # this is a switch table
+                    continue
+                addr = p.getAddr(c.Segment, c.Offset)
+                size = c.Type.type_size()
+
+                item = p.getItem(addr)
+                if not item:
+                    # find contrib, it will be in this module
+                    for ctrb in fn.module.sectionContribs:
+                        if ctrb.Section == c.Segment and c.Offset >= ctrb.Offset and c.Offset < ctrb.Offset + ctrb.Size:
+                            contrib = (ctrb, c.Offset - ctrb.Offset)
+                            break
+                    item = Data(c, p.getAddr(c.Segment, c.Offset), c.Type, contrib=contrib)
+                self.staticlocals[addr:addr + max(size, 1)] = (c.Name, c.Type)
+                self.locals.append(("static const ", c.Name, c.Type, item))
+            elif isinstance(c, codeview.UserDefinedType):
+                self.locals.append(("typedef ", c.Name, c.Type, None))
 
         self.fn = fn
         self.p = p
 
+    def locals_as_code(self):
+        s = ""
+        for kw, name, ty, item in self.locals:
+            if item:
+                s += "\t" + item.as_code()
+            else:
+                s += f"\t{kw}{ty.typestr(name)};\n"
+        return s
 
     def stack_access(self, offset, size):
         var = self.stack.at(offset)
