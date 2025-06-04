@@ -3,32 +3,10 @@ from constructutils import *
 
 from typing import *
 import textwrap
+from varint import VarInt
 
-# Some fields used this variable length integer encoding
-#   If the 16bit "typeOrVal" value is less than 0x8000, then the value is inlined (This might be limited to 8 bit values)
-#   Otherwise, it is treated as a type and a value of that type follows
-class VarInt(ConstructClass):
-    subcon = Struct(
-            "typeOrVal" / Int16ul,
-            "value" / Switch(this.typeOrVal,
-                {
-                    0x8000: Int8sl,  # LF_CHAR
-                    0x8001: Int16sl, # LF_SHORT
-                    0x8002: Int16ul, # LF_USHORT
-                    0x8003: Int32sl, # LF_LONG
-                    0x8004: Int32ul, # LF_ULONG
-                    0x8009: Int64sl, # LF_QUADWORD
-                    0x800a: Int64ul, # LF_UQUADWORD
-                },
-                default=Computed(this.typeOrVal) # otherwise, value was small enough to be inlined
-            )
-        )
+from tpi import TypeIndex
 
-    def __eq__(self, other):
-        return self.value == other
-
-    def __str__(self):
-        return f"{self.value}"
 
 CVSwitch = {}
 
@@ -60,7 +38,7 @@ class CompileFlags(ConstructClass):
 @CVRec(0x3) # S_CONSTANT_16t
 class Constant(ConstructClass):
     subcon = Struct(
-        "Type" / Int16ul,
+        "Type" / TypeIndex,
         "Value" / VarInt, # cvinfo.h claims this is always a short, but it's actually VarInt
         "Name" / PascalString(Int8ul, "ascii"),
     )
@@ -68,7 +46,7 @@ class Constant(ConstructClass):
 @CVRec(0x4) # S_UDT_16t
 class UserDefinedType(ConstructClass):
     subcon = Struct(
-        "Type" / Int16ul,
+        "Type" / TypeIndex,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
@@ -90,7 +68,7 @@ class ObjName(ConstructClass):
 class BpRelative(ConstructClass):
     subcon = Struct(
         "Offset" / Int32sl,
-        "Type" / Int16ul,
+        "Type" / TypeIndex,
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
@@ -118,7 +96,7 @@ class DataSym(ConstructClass):
     subcon = Struct(
             "Offset" / Int32ul,
             "Segment" / Int16ul,
-            "Type" / Int16ul,
+            "Type" / TypeIndex,
             "Name" / PascalString(Int8ul, "ascii"),
         )
 
@@ -159,7 +137,7 @@ class ProcSym(TreeNode, ConstructClass):
         "DbgEnd" / Int32ul,
         "Offset" / Int32ul,
         "Segment" / Int16ul,
-        "Type" / Int16ul,
+        "Type" / TypeIndex,
         "Flags" / Int8ul,
         "Name" / PascalString(Int8ul, "ascii"),
     )
@@ -263,7 +241,7 @@ class LocalProcRef(RefSym):
 @CVRec(0x040a) # LF_VFUNCTAB_16t
 class VirtualFunctionTable(ConstructClass):
     subcon = Struct(
-        "Type" / Int16ul,
+        "Type" / TypeIndex,
     )
 
 class CodeviewRecord(ConstructClass):

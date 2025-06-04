@@ -122,10 +122,10 @@ class Module:
 
             address = program.getAddr(g.Segment, g.Offset)
 
-            ty = program.types.types[g.Type]
-            if g.Type != 0:
-
+            ty = g.Type.Type
+            if g.Type.value != 0:
                 item = Data(g, address, ty)
+                self.use_type(g.Type.Type, item, TypeUsage.GlobalData)
             elif g.Name.startswith('??_C'): # work out type based on name mangling
                 item = StringLiterial(g, address)
             elif g.Name.startswith('??_7'):
@@ -143,8 +143,6 @@ class Module:
             if item.length:
                 program.items[item.address: item.address + item.length] = item
             self.all_items += [item]
-            self.use_type(ty, item, TypeUsage.GlobalData)
-
 
 
         for sym in symbols or []:
@@ -352,7 +350,7 @@ class Program:
                     print("GlobalData {g.Name} already exists at {addr:#010x}")
                     print(g)
                     print(item.sym)
-                    new_type = self.types.types[g.Type]
+                    new_type = g.Type.Type
                     if item.ty.TI != new_type.TI:
                         print(f"Type mismatch: {item.ty.typestr()} != {new_type.typestr()}")
                         print(new_type)
@@ -360,7 +358,7 @@ class Program:
                     breakpoint()
 
 
-                item = Data(g, addr, self.types.types[g.Type])
+                item = Data(g, addr, g.Type.Type)
                 if item.length:
                     self.items[item.address: item.address + item.length] = item
             if isinstance(g, LocalData):
@@ -431,8 +429,7 @@ class Symbols:
 
             # Link symbol with type
             try:
-                ty = rec.Type
-                types.types[ty].symbols.append(rec)
+                rec.Type.Type.symbols.append(rec)
             except AttributeError:
                 pass
 

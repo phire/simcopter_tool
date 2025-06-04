@@ -1,10 +1,11 @@
 
+from io import BytesIO
 from construct import *
 from access import Access, AccessPointer, ArrayAccess
 from base_types import cast_access, ScaleExpr
 from constructutils import *
 
-from codeview import VarInt
+from varint import VarInt
 from collections import defaultdict
 
 class TypeLeaf(ConstructClass):
@@ -73,8 +74,14 @@ class TypeLeaf(ConstructClass):
 class TypeIndex(ConstructValueClass):
     subcon = Int16ul
 
-    def link(self, other, tpi):
+    def parsed(self, ctx):
+        tpi = ctx._params.types
         self.Type = tpi.types[self.value]
+        if self.Type is None and self.value != 0:
+            breakpoint()
+
+    def link(self, other, tpi):
+        #self.Type = tpi.types[self.value]
         self.Type.addRef(other)
 
     def __str__(self):
@@ -90,10 +97,6 @@ class TypeIndex(ConstructValueClass):
             return hash(self.value)
         except AttributeError:
             return 0
-
-    def parsed(self, ctx):
-        self.Type = None
-        self.ViaForwardsRef = None
 
     def shortstr(self):
         return self.Type.shortstr()
@@ -858,6 +861,10 @@ class TypeRecord(ConstructClass):
             print(f"Unknown leaf type: {self.Type:04x} {self.Data}")
             breakpoint()
 
+        idx = len(ctx._.types.types)
+        self.Data._idx = idx
+        self.Data.TI = idx
+        ctx._.types.types.append(self.Data)
 
 
 class TypeInfomation(ConstructClass):
@@ -878,33 +885,32 @@ class TypeInfomation(ConstructClass):
     )
 
     def parsed(self, ctx):
-        #assert sizeof(self.Records) == self.ByteCount
-        import base_types
-        self.types = list(base_types.types)
-
-        self.byRecOffset = {}
-        byName = defaultdict(list)
-
         idx = self.MinimumTI
-        assert len(self.types) == self.MinimumTI
+        byName = defaultdict(list)
 
         for rec in self.Records:
             addr = rec._addr
             rec = rec.Data
-            rec._idx = idx
-            rec.TI = idx
+            assert rec._idx == idx
             idx += 1
-            self.types.append(rec)
-            self.byRecOffset[addr] = rec
+            ctx.types.byRecOffset[addr] = rec
 
             if hasattr(rec, "Name"):
                 byName[rec.Name].append(rec)
 
-        self.byName = dict(byName)
+        ctx.types.byName = dict(byName)
 
-        for ty in self.types:
+        for ty in ctx.types.types:
             if isinstance(ty, TypeLeaf):
-                ty.linkTIs(None, self)
+                ty.linkTIs(None, ctx.types)
+
+class Types:
+    def __init__(self):
+        import base_types
+        self.types = list(base_types.types)
+
+        self.byRecOffset = {}
+
 
     def fromOffset(self, offset):
         try:
@@ -940,3 +946,7 @@ class TypeInfomation(ConstructClass):
             print(self.types[o.TI])
 
 
+def parse_tpi(stream):
+    tpi = Types()
+    TypeInfomation.parse_stream(stream, types=tpi)
+    return tpi

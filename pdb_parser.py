@@ -246,7 +246,7 @@ class ProgramData:
         now = time.time()
 
         # The type records are always in stream 2
-        self.types = TypeInfomation.parse_stream(msf.getStream(2))
+        self.types = parse_tpi(msf.getStream(2))
         elapsed = int((time.time() - now) * 1000)
         print(f"done, {elapsed} ms", file=sys.stderr)
 
@@ -263,7 +263,7 @@ class ProgramData:
         now = time.time()
 
         # The symbol record stream contains all globals (and public globals)
-        self.symbols = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream))
+        self.symbols = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream), self.types)
 
         elapsed = int((time.time() - now) * 1000)
         print(f"done, {elapsed} ms", file=sys.stderr)
@@ -290,7 +290,7 @@ class ProgramData:
                         #HexDump(GreedyBytes),
                     ))))
 
-                mod_details = moduleStream.parse_stream(mod_stream)
+                mod_details = moduleStream.parse_stream(mod_stream, types=self.types)
 
                 symbols = toTree(list(mod_details.Symbols.Records)) if mod_details.Symbols else None
                 lines = mod_details.Lines
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     tpi_stream = msf.getStream(2)
     dbi_stream = msf.getStream(3)
 
-    #tpi = TypeInfomation.parse_stream(tpi_stream)
+    #tpi = parse_tpi(tpi_stream)
     #print(tpi)
 
     dbi = DebugInfomation.parse_stream(dbi_stream)

@@ -108,10 +108,10 @@ class Visablity(Enum):
     Global = 1
     Public = 2
 
-def LoadSymbols(symbolRecordStream):
+def LoadSymbols(symbolRecordStream, types):
 
     symbols = RepeatUntil(lambda x, lst, ctx: x._io.tell() == symbolRecordStream.size,
             Aligned(4, CodeviewRecord)
-        ).parse_stream(symbolRecordStream)
+        ).parse_stream(symbolRecordStream, types=types)
 
     return symbols

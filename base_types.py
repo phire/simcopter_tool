@@ -79,6 +79,9 @@ class NoType(BaseType):
     """uncharacterized type (no type)"""
     TI = 0x0000
 
+    def __bool__(self):
+        return False
+
 class AbsoluteSymbol(BaseType):
     """absolute symbol"""
     TI = 0x0001

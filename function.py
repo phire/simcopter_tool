@@ -94,6 +94,11 @@ class Line:
         self.offset = offset
         self.line = line
 
+    def as_code(self):
+        if self.line is not None:
+            return f"// LINE {self.line:d}:\n"
+        return ""
+
     def __repr__(self):
         return f"Line({self.offset:#x}, {self.line})"
 
@@ -105,6 +110,9 @@ class SwitchTable:
     def __repr__(self):
         return f"SwitchTable({self.cv.Offset:#x}, {self.cv.Length})"
 
+    def as_code(self):
+        return f"// Switch table\n"
+
     def access(self, name, offset, size):
         return Access(size, f"{name}[{offset//size}]", None, offset=offset)
 
@@ -115,8 +123,32 @@ class SwitchPointers:
     def __repr__(self):
         return "SwitchPointers()"
 
+    def as_code(self):
+        return f"// Switch pointers\n"
+
     def access(self, name, offset, size):
         return Access(size, f"{name}[{offset}]", None, offset=offset)
+
+
+
+def cv_string(c):
+    if isinstance(c, codeview.BpRelative):
+        if c.Offset > 0:
+            return "" # skip args
+        if c.Name in ["this"]:
+            return ""
+        ty = c.Type.Type
+        return f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
+    elif isinstance(c, codeview.LocalData):
+
+
+        ty = c.Type.Type
+        if c.Name and c.Type.Type:
+            return f"\tstatic const {ty.typestr(c.Name)} = {{ /* todo */ }};\n"
+    elif isinstance(c, codeview.UserDefinedType):
+        ty = c.Type.Type
+        return f"\t typedef {ty.typestr(c.Name)};\n"
+    return ""
 
 class BlockStart:
     def __init__(self, cv):
@@ -130,12 +162,21 @@ class BlockStart:
     def __repr__(self):
         return f"BlockStart({self.name}, {self.offset:#x}, {self.length})"
 
+    def as_code(self):
+        s = f"// Block start:\n"
+        for c in self.cv._children:
+            s += cv_string(c)
+        return s
+
 class Label:
     def __init__(self, name):
         self.name = name.replace("$", "_")
 
     def __repr__(self):
         return f"Label({self.name})"
+
+    def as_code(self):
+        return f"{self.name}:\n"
 
 class Function(Item):
     def __init__(self, program, module, cv, lines, contrib):
@@ -167,7 +208,7 @@ class Function(Item):
         else:
             breakpoint()
 
-        self.ty = find_type(program, self)
+        self.ty = cv.Type.Type if cv else None
         self.args = []
         self.ret = None
 
@@ -189,7 +230,7 @@ class Function(Item):
 
             match child:
                 case codeview.BpRelative():
-                    ty = program.types.types[child.Type]
+                    ty = child.Type.Type
                     if child.Offset > 0 and child.Name not in ["__$ReturnUdt", "$initVBases"]:
                         # This is an argument
                         self.module.use_type(ty, self, TypeUsage.Argument)
@@ -209,13 +250,13 @@ class Function(Item):
                         HandleChild(inner_child)
                 case codeview.LocalData():
                     address = program.getAddr(child.Segment, child.Offset)
-                    if child.Type == 0 and child.Name == "":
+                    if not child.Type.Type and child.Name == "":
                         # This is a switch table
                         offset = address - self.address
                         self.labels[offset].append(SwitchTable(child))
 
                         return
-                    ty = program.types.types[child.Type]
+                    ty = child.Type.Type
                     self.module.use_type(ty, self, TypeUsage.LocalStatic)
                     self.local_vars.append(LocalData(child.Name, ty, address))
 
@@ -260,7 +301,7 @@ class Function(Item):
             if isinstance(c, codeview.BpRelative) and c.Name == "__$ReturnUdt":
                 # This is the return-value optimization.
                 # But it's sometimes missing the return type, so patch it in.
-                if c.Type == 0:
+                if not c.Type.Type:
                     # We need to find a pointer typeinfo
                     try:
                         class_TI = self.ret.TI
@@ -432,24 +473,6 @@ class Function(Item):
 
         intro = ""
 
-        def cv_string(c):
-            nonlocal p
-            if isinstance(c, codeview.BpRelative):
-                if c.Offset > 0:
-                    return "" # skip args
-                if c.Name in ["this"]:
-                    return ""
-                ty = p.types.types[c.Type]
-                return f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
-            elif isinstance(c, codeview.LocalData):
-                addr = p.getAddr(c.Segment, c.Offset)
-
-                ty = p.types.types[c.Type]
-                return f"\tstatic const {ty.typestr(c.Name)} = {{ /* <data@0x{addr:08x}> */ }};\n"
-            elif isinstance(c, codeview.UserDefinedType):
-                ty = p.types.types[c.Type]
-                return f"\t typedef {ty.typestr(c.Name)};\n"
-            return ""
 
         for c in self.codeview._children:
             intro += cv_string(c)
@@ -469,10 +492,7 @@ class Function(Item):
 
         for bb in body:
             if not isinstance(bb, BasicBlock):
-                if isinstance(bb, SwitchPointers):
-                    s += f"// Switch pointers\n"
-                if isinstance(bb, SwitchTable):
-                    s += f"// Switch table\n"
+                s += bb.as_code()
                 continue
 
             labels = bb.labels
@@ -506,23 +526,15 @@ class Function(Item):
     def __repr__(self):
         return f"Function({self.sig()}, {self.address:#x})"
 
-
-def find_type(p, func):
-    if not func.codeview:
-        return None
-
-    try:
-        TI = func.codeview.Type
-        if TI == 0:
-            return None
-    except AttributeError:
-        return None
-
-    return p.types.types[TI]
-
 class BlockEnd:
     def __init__(self, block):
         self.block = block
+
+    def __repr__(self):
+        return f"BlockEnd({self.block.Name}, {self.block.Offset:#x}, {self.block.Length})"
+
+    def as_code(self):
+        return f"// Block end:\n"
 
 class Scope:
     def __init__(self, cv, p, fn, outer=None):
@@ -534,7 +546,7 @@ class Scope:
             self.staticlocals = IntervalTree()
 
         def info(p, c):
-            ty = p.types.types[c.Type]
+            ty = c.Type.Type
             try:
                 size = ty.type_size()
             except:
@@ -550,10 +562,10 @@ class Scope:
 
         def handle_staticlocal(c):
             nonlocal p, self
-            if c.Type == 0 and c.Name == "":
+            if not c.Type.Type and c.Name == "":
                 return
             addr = p.getAddr(c.Segment, c.Offset)
-            ty = p.types.types[c.Type]
+            ty = c.Type.Type
             size = ty.type_size()
 
             if size == 0:
