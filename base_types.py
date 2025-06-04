@@ -30,7 +30,7 @@ class BaseType:
     con = None  # Construct class for this type, if applicable
     def __init__(self):
         self._refs = set()
-        self.symbols = []
+        self._symbols = set()
 
     def __str__(self):
         try:

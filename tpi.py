@@ -12,7 +12,7 @@ class TypeLeaf(ConstructClass):
     con = None  # Construct class for this type, if applicable
 
     def parsed(self, ctx):
-        self.symbols = []
+        self._symbols = set
 
     def linkTIs(self, other, tpi, history=set()):
         if id(self) in history:
@@ -22,7 +22,7 @@ class TypeLeaf(ConstructClass):
             if k.startswith("_"):
                 continue
             if isinstance(lf, TypeIndex):
-                lf.link(self, tpi)
+                self[k] = lf.link(self, tpi)
             elif isinstance(lf, ListContainer) or isinstance(lf, list):
                 for item in lf:
                     if isinstance(item, TypeLeaf):
@@ -83,6 +83,7 @@ class TypeIndex(ConstructValueClass):
     def link(self, other, tpi):
         #self.Type = tpi.types[self.value]
         self.Type.addRef(other)
+        return self.Type
 
     def __str__(self):
         ty = getattr(self, "Type", None)
@@ -250,7 +251,7 @@ class LfModifier(TypeLeaf):
     )
 
     def getCon(self):
-        return self.Type.Type.con
+        return self.Type.con
 
     def mods(self):
         s = self.Attributes.str()
@@ -271,7 +272,7 @@ class LfModifier(TypeLeaf):
         return self.Type.access(prefix, offset, size)
 
     def initializer(self, parsed):
-        return self.Type.Type.initializer(parsed)
+        return self.Type.initializer(parsed)
 
 class PointerAttributes(Bitfield):
     subcon = FixedSized(2,
@@ -336,10 +337,10 @@ class LfPointer(TypeLeaf):
     def typestr(self, name=None):
         match self.Attributes.ptrmode:
             case "Ptr":
-                if isinstance(self.Type.Type, LfProcedure):
+                if isinstance(self.Type, LfProcedure):
                     #breakpoint()
                     # Special case for function pointers
-                    fn = self.Type.Type
+                    fn = self.Type
                     if not name:
                         name = ""
                     s = f"{fn.rvtype.typestr()} (*{name})({', '.join(str(arg.typestr()) for arg in fn.args)})"
@@ -408,7 +409,7 @@ class LfArray(TypeLeaf):
             pass
 
     def initializer(self, parsed):
-        init = self.Type.Type.initializer
+        init = self.Type.initializer
         emnts = [init(x) for x in parsed]
         return f"{{{', '.join(emnts)}}}"
 
@@ -416,7 +417,7 @@ class LfArray(TypeLeaf):
         return self.typestr()
 
     def typestr(self, name=None):
-        element_size = self.Type.Type.type_size()
+        element_size = self.Type.type_size()
         count = self.Size.value // element_size
 
         if name:
@@ -436,12 +437,12 @@ class LfArray(TypeLeaf):
             index = offset // element_size
             var_off = offset - index * element_size
 
-        array = ArrayAccess(prefix, index, self.Type.Type)
+        array = ArrayAccess(prefix, index, self.Type)
         return array.access(var_off, size)
 
     def getCon(self):
-        element_size = self.Type.Type.type_size()
-        element_con = self.Type.Type.getCon()
+        element_size = self.Type.type_size()
+        element_con = self.Type.getCon()
         if element_size and element_con is not None:
             return Array(self.Size.value // element_size, element_con)
 
@@ -576,14 +577,14 @@ class LfEnum(FrowardRef):
             name = "/* __unnamed */"
         access = "public"
         typestr = ""
-        if self.utype.value != 0x74: # int32_t
+        if self.utype.TI != 0x74: # int32_t
             typestr = f" /* {self.utype.Type.typestr()} */"
 
         s = f"enum {name}{typestr} {{\n"
         props = self.properties.str(map={"isnested": ''})
         if props:
             s += f"\t// properties: {self.properties}\n"
-        for e in self.fieldList.Type.Data:
+        for e in self.fieldList.Data:
 
             if e.attr.access != access:
                 s += f"//{e.attr.access}\n"
@@ -607,13 +608,10 @@ class LfProcedure(TypeLeaf):
     )
 
     def linkTIs(self, other, tpi):
-        self.addRef(other)
-        self.rvtype.link(self, tpi)
+        super().linkTIs(other, tpi)
         if self.parmcount:
-            self.args = tpi.types[self.arglist.value].args
+            self.args = [arg.link(self, tpi) for arg in self.arglist.args]
             assert self.parmcount == len(self.args)
-            for arg in self.args:
-                arg.link(self, tpi)
         else:
             self.args = []
         del self.arglist
@@ -651,22 +649,17 @@ class LfMemberFunction(TypeLeaf):
     )
 
     def linkTIs(self, other, tpi):
-        self.addRef(other)
-        self.rvtype.link(self, tpi)
-        self.classtype.link(self, tpi)
-        self.thistype.link(self, tpi)
+        super().linkTIs(other, tpi)
         if self.parmcount:
-            self.args = tpi.types[self.arglist.value].args
+            self.args = [arg.link(self, tpi) for arg in self.arglist.args]
             assert self.parmcount == len(self.args)
-            for arg in self.args:
-                arg.link(self, tpi)
         else:
             self.args = []
         del self.arglist
         del self.parmcount
 
     def string(self, name):
-        s = f"{self.rvtype} {self.classtype.Type.Name}::{name}("
+        s = f"{self.rvtype} {self.classtype.Name}::{name}("
         for arg in self.args:
             s += f"{arg}, "
         s += ")"

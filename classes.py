@@ -6,13 +6,13 @@ import textwrap
 from intervaltree import IntervalTree
 
 def process_methods(c, methods, p, base=None):
-    for method in methods.methodList.Type.Data:
-        if method.index.value == 0:
+    for method in methods.methodList.Data:
+        if not method.index:
             # TODO: is this the new constructor?
             #print(f"NoType method found for {c.name}::{methods.Name}")
             continue
-        if not isinstance(method.index.Type, tpi.LfMemberFunction):
-            print("Unknown method type", method.index.Type.__class__)
+        if not isinstance(method.index, tpi.LfMemberFunction):
+            print("Unknown method type", method.index.__class__)
             breakpoint()
             continue
         method.Name = methods.Name
@@ -20,7 +20,7 @@ def process_methods(c, methods, p, base=None):
         mbr.parent = c
 
         if base == c:
-            method.index.Type.classtype.Type._def_class = base
+            method.index.classtype._def_class = base
         c.fields += [mbr]
 
 
@@ -38,7 +38,7 @@ def process_field(field, c, p, base_offset=0, base=None):
                 method = Method(c, field, p)
                 method.parent = c
                 c.fields.append(method)
-                field.index.Type.classtype.Type._def_class = base
+                field.index.classtype._def_class = base
 
         case tpi.LfMember:
             size = field.index.type_size()
@@ -87,13 +87,13 @@ def process_field(field, c, p, base_offset=0, base=None):
 
         case tpi.LfVFuncTab:
             # ptr to vtable
-            assert isinstance(field.index.Type, tpi.LfPointer)
+            assert isinstance(field.index, tpi.LfPointer)
             if inherriting:
                 return
 
 
-            ptr_size = field.index.Type.type_size()
-            vtable = field.index.Type.Type # um... wtf?
+            ptr_size = field.index.type_size()
+            vtable = field.index.Type
             field = VFTable(field, vtable, f"{c.name}_vftable", p)
             c.members[c.offset:c.offset + ptr_size] = field
             c.vtable = vtable
@@ -129,15 +129,15 @@ class Class:
         if self.fwdref:
             return
 
-        assert impl.derivedList.value == 0, f"Class {self.name} has derivedList {impl.derivedList.value}"
+        assert not impl.derivedList, f"Class {self.name} has derivedList {impl.derivedList}"
 
-        if impl.vshape.value != 0:
-            self.vtable_shape = impl.vshape.Type.desc
+        if impl.vshape:
+            self.vtable_shape = impl.vshape.desc
 
         self.offset = 0
         self.base_offset = 0
 
-        for field in impl.fieldList.Type.Data:
+        for field in impl.fieldList.Data:
             process_field(field, self, p, 0, base=self)
 
         if self.offset == 0:
@@ -233,11 +233,11 @@ class BaseRef:
         self.access = field.attr.access
         self.attr = field.attr
 
-        self.ty = field.index.Type
+        self.ty = field.index
         self.name = self.ty.Name
         if self.virtual:
             self.offset = field.ptroffset.value
-            self.vbptr_ty = field.vbptr.Type
+            self.vbptr_ty = field.vbptr
         else:
             # not virtual
             self.offset = field.offset.value
@@ -278,7 +278,7 @@ class BaseRef:
         c.inherited_from.append(self.name)
 
         assert not self.virtual
-        for field in self.ty.fieldList.Type.Data:
+        for field in self.ty.fieldList.Data:
             process_field(field, c, p, self.offset + offset, base=self)
 
         #c.base_offset = c.offset
@@ -291,7 +291,7 @@ class Field:
         except AttributeError:
             self.name = "<unknown>"
         try:
-            self.ty = field.index.Type
+            self.ty = field.index
         except AttributeError:
             pass
         self.access = field.attr.access
@@ -349,7 +349,7 @@ class Method(Field):
         super().__init__(field, p)
         self.parent = c
 
-        func = field.index.Type
+        func = field.index
         assert isinstance(func, tpi.LfMemberFunction)
 
         self.func = func
@@ -410,7 +410,7 @@ class Method(Field):
 class Nested(Field):
     def __init__(self, field, c, p):
         self.name = field.Name
-        self.ty = field.index.Type
+        self.ty = field.index
         self.access = None
         self.attr = None
         self.parent = c
@@ -455,8 +455,8 @@ class VirtualBase(Field):
     def __init__(self, field, p):
 
         super().__init__(field, p)
-        self.name = field.index.Type.Name
-        self.ty = field.vbptr.Type
+        self.name = field.index.Name
+        self.ty = field.vbptr
         self.offset = field.ptroffset.value
 
     def access_field(self, prefix, offset, size):
@@ -475,7 +475,7 @@ class VirtualBase(Field):
 class VFTable(Member):
     def __init__(self, field, vtable, name, p):
         self.name = name
-        self.ty = field.index.Type
+        self.ty = field.index
         self.vtable = vtable
         self.synthetic = True
 

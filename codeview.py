@@ -43,12 +43,18 @@ class Constant(ConstructClass):
         "Name" / PascalString(Int8ul, "ascii"),
     )
 
+    def parsed(self, ctx):
+        self.Type = self.Type.Type
+
 @CVRec(0x4) # S_UDT_16t
 class UserDefinedType(ConstructClass):
     subcon = Struct(
         "Type" / TypeIndex,
         "Name" / PascalString(Int8ul, "ascii"),
     )
+
+    def parsed(self, ctx):
+        self.Type = self.Type.Type
 
 @CVRec(0x6) # S_END
 class End(ConstructClass):
@@ -71,6 +77,9 @@ class BpRelative(ConstructClass):
         "Type" / TypeIndex,
         "Name" / PascalString(Int8ul, "ascii"),
     )
+
+    def parsed(self, ctx):
+        self.Type = self.Type.Type
 
 def getContrib(sym, program):
     try:
@@ -100,6 +109,9 @@ class DataSym(ConstructClass):
             "Name" / PascalString(Int8ul, "ascii"),
         )
 
+    def parsed(self, ctx):
+        self.Type = self.Type.Type
+
     def getContrib(self, program):
         return getContrib(self, program)
 
@@ -127,6 +139,7 @@ class TreeNode:
         return getattr(self, '_children', [])
 
 
+
 class ProcSym(TreeNode, ConstructClass):
     subcon = Struct(
         "pParent" / Int32ul,
@@ -141,6 +154,9 @@ class ProcSym(TreeNode, ConstructClass):
         "Flags" / Int8ul,
         "Name" / PascalString(Int8ul, "ascii"),
     )
+
+    def parsed(self, ctx):
+        self.Type = self.Type.Type
 
     def getContrib(self, program):
         return getContrib(self, program)
@@ -243,6 +259,9 @@ class VirtualFunctionTable(ConstructClass):
     subcon = Struct(
         "Type" / TypeIndex,
     )
+
+    def parsed(self, ctx):
+        self.Type = self.Type.Type
 
 class CodeviewRecord(ConstructClass):
     subcon = Aligned(4, Struct(

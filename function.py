@@ -137,16 +137,16 @@ def cv_string(c):
             return "" # skip args
         if c.Name in ["this"]:
             return ""
-        ty = c.Type.Type
+        ty = c.Type
         return f"\t{ty.typestr(c.Name)};\n" # // ebp-{0-c.Offset:x}h\n"
     elif isinstance(c, codeview.LocalData):
 
 
-        ty = c.Type.Type
-        if c.Name and c.Type.Type:
+        ty = c.Type
+        if c.Name and c.Type:
             return f"\tstatic const {ty.typestr(c.Name)} = {{ /* todo */ }};\n"
     elif isinstance(c, codeview.UserDefinedType):
-        ty = c.Type.Type
+        ty = c.Type
         return f"\t typedef {ty.typestr(c.Name)};\n"
     return ""
 
@@ -208,7 +208,7 @@ class Function(Item):
         else:
             breakpoint()
 
-        self.ty = cv.Type.Type if cv else None
+        self.ty = cv.Type if cv else None
         self.args = []
         self.ret = None
 
@@ -230,7 +230,7 @@ class Function(Item):
 
             match child:
                 case codeview.BpRelative():
-                    ty = child.Type.Type
+                    ty = child.Type
                     if child.Offset > 0 and child.Name not in ["__$ReturnUdt", "$initVBases"]:
                         # This is an argument
                         self.module.use_type(ty, self, TypeUsage.Argument)
@@ -250,13 +250,13 @@ class Function(Item):
                         HandleChild(inner_child)
                 case codeview.LocalData():
                     address = program.getAddr(child.Segment, child.Offset)
-                    if not child.Type.Type and child.Name == "":
+                    if not child.Type and child.Name == "":
                         # This is a switch table
                         offset = address - self.address
                         self.labels[offset].append(SwitchTable(child))
 
                         return
-                    ty = child.Type.Type
+                    ty = child.Type
                     self.module.use_type(ty, self, TypeUsage.LocalStatic)
                     self.local_vars.append(LocalData(child.Name, ty, address))
 
@@ -273,14 +273,14 @@ class Function(Item):
             if self.args and isinstance(self.ty, tpi.LfMemberFunction) and self.ty.calltype != tpi.CallingConvention.ThisCall and self.args[0].name == "this":
                 self.args = self.args[1:]  # remove 'this' pointer
                 print(f"Warning: Function {self.name} is a member function, but has an extra 'this' pointer in args")
-            if len(self.ty.args) > 1 and self.ty.args[-1].value == 0:
+            if len(self.ty.args) > 1 and self.ty.args[-1].TI == 0:
                 self.args.append(VarArgs())  # add varargs if last arg is NoType
             assert len(self.args) == len(self.ty.args)
-            self.ret = self.ty.rvtype.Type
+            self.ret = self.ty.rvtype
             module.use_type(self.ret, self, TypeUsage.Return)
 
             if isinstance(self.ty, tpi.LfMemberFunction):
-                module.use_type(self.ty.classtype.Type, self, TypeUsage.MemberImpl)
+                module.use_type(self.ty.classtype, self, TypeUsage.MemberImpl)
 
         else:
             # the type is missing. We still know all the args from codeview
@@ -301,7 +301,7 @@ class Function(Item):
             if isinstance(c, codeview.BpRelative) and c.Name == "__$ReturnUdt":
                 # This is the return-value optimization.
                 # But it's sometimes missing the return type, so patch it in.
-                if not c.Type.Type:
+                if not c.Type:
                     # We need to find a pointer typeinfo
                     try:
                         class_TI = self.ret.TI
@@ -309,9 +309,9 @@ class Function(Item):
                     except AttributeError:
                         continue
                     types = [program.types.types[x] for x in _refs]
-                    ptr = [x for x in types if isinstance(x, tpi.LfPointer) and x.Type.value == class_TI]
+                    ptr = [x for x in types if isinstance(x, tpi.LfPointer) and x.Type.TI == class_TI]
                     if ptr:
-                        c.Type = ptr[0].TI
+                        c.Type = ptr[0]
 
 
     def post_process(self):
@@ -546,7 +546,7 @@ class Scope:
             self.staticlocals = IntervalTree()
 
         def info(p, c):
-            ty = c.Type.Type
+            ty = c.Type
             try:
                 size = ty.type_size()
             except:
@@ -562,10 +562,10 @@ class Scope:
 
         def handle_staticlocal(c):
             nonlocal p, self
-            if not c.Type.Type and c.Name == "":
+            if not c.Type and c.Name == "":
                 return
             addr = p.getAddr(c.Segment, c.Offset)
-            ty = c.Type.Type
+            ty = c.Type
             size = ty.type_size()
 
             if size == 0:

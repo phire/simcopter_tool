@@ -26,13 +26,13 @@ class Usage:
         while True:
             match ty:
                 case tpi.LfPointer():
-                    ty = ty.Type.Type
+                    ty = ty.Type
                     mode = self.Ptr(ty, mode)
                 case tpi.LfModifier():
-                    ty = ty.Type.Type
+                    ty = ty.Type
                     mode = self.Modifier(ty, mode)
                 case tpi.LfArray():
-                    ty = ty.Type.Type
+                    ty = ty.Type
                     mode = self.Array(ty, mode)
                 case _:
                     break
@@ -122,10 +122,10 @@ class Module:
 
             address = program.getAddr(g.Segment, g.Offset)
 
-            ty = g.Type.Type
-            if g.Type.value != 0:
+            ty = g.Type
+            if g.Type:
                 item = Data(g, address, ty)
-                self.use_type(g.Type.Type, item, TypeUsage.GlobalData)
+                self.use_type(g.Type, item, TypeUsage.GlobalData)
             elif g.Name.startswith('??_C'): # work out type based on name mangling
                 item = StringLiterial(g, address)
             elif g.Name.startswith('??_7'):
@@ -350,7 +350,7 @@ class Program:
                     print("GlobalData {g.Name} already exists at {addr:#010x}")
                     print(g)
                     print(item.sym)
-                    new_type = g.Type.Type
+                    new_type = g.Type
                     if item.ty.TI != new_type.TI:
                         print(f"Type mismatch: {item.ty.typestr()} != {new_type.typestr()}")
                         print(new_type)
@@ -358,7 +358,7 @@ class Program:
                     breakpoint()
 
 
-                item = Data(g, addr, g.Type.Type)
+                item = Data(g, addr, g.Type)
                 if item.length:
                     self.items[item.address: item.address + item.length] = item
             if isinstance(g, LocalData):
@@ -429,7 +429,7 @@ class Symbols:
 
             # Link symbol with type
             try:
-                rec.Type.Type.symbols.append(rec)
+                rec.Type._symbols.append(rec)
             except AttributeError:
                 pass
 

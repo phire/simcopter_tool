@@ -252,8 +252,8 @@ def dump_global(f, p, sym, contrib):
         if name and name != sym.Name:
             f.write(f"// Demangled: {name}\n")
 
-            if sym.Type.Type:
+            if sym.Type:
 
-                print(sym.Type.Type)
+                print(sym.Type)
         f.write(f"// {sym.Name}\n")
 
