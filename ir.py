@@ -52,15 +52,15 @@ class Reg(Expression):
 
     def __repr__(self):
         if self.expr:
-            return f"Reg({self.reg}, {self.expr})"
+            return f"Reg({REG_TO_STRING[self.reg]}, {self.expr})"
         else:
-            return f"Reg({self.reg})"
+            return f"Reg({REG_TO_STRING[self.reg]})"
 
     def __eq__(self, other):
         if isinstance(other, Reg):
             return self.reg == other.reg
         if isinstance(other, str):
-            return self.reg == other
+            return REG_TO_STRING[self.reg] == other
         return False
 
     def as_lvalue(self):
@@ -79,7 +79,7 @@ class Reg(Expression):
         return False
 
     def as_asm(self):
-        return self.reg
+        return REG_TO_STRING[self.reg]
 
 class Const(RValue):
     __match_args__ = ("value",)
@@ -408,19 +408,17 @@ info_factory = InstructionInfoFactory()
 
 from x86 import formatter, REG_TO_STRING, memsize
 
-def process_operand(inst, i, state):
+def process_operand(inst, info, i, state):
     op = formatter.get_instruction_operand(inst, i)
     if op is None:
          return formatter.format_operand(inst, i)
-    info = info_factory.info(inst)
 
     def get_reg(reg_id):
         if reg_id == Register.NONE:
             return None
-        reg = REG_TO_STRING[reg_id]
-        if expr := state.reg.get(reg):
+        if expr := state.reg.get(reg_id):
             return expr
-        return Reg(reg)
+        return Reg(reg_id)
 
 
     match inst.op_kind(op):
@@ -431,7 +429,7 @@ def process_operand(inst, i, state):
                 if expr := get_reg(reg_id):
                     # If the register is already defined in the state, return that expression
                     return expr
-            return Reg(REG_TO_STRING[reg_id])
+            return Reg(reg_id)
 
         case OpKind.IMMEDIATE8 | OpKind.IMMEDIATE8_2ND | OpKind.IMMEDIATE16 | OpKind.IMMEDIATE32 | OpKind.IMMEDIATE64 | OpKind.IMMEDIATE8TO16 | OpKind.IMMEDIATE8TO32 | OpKind.IMMEDIATE8TO64:
             imm = inst.immediate(op)
@@ -506,8 +504,7 @@ def regsize(reg):
     else:
         return 2
 
-def modifies_reg(inst, mnenomic, operands):
-    info = info_factory.info(inst)
+def modifies_reg(inst, info, mnenomic, operands):
 
     if len(operands) != inst.op_count:
         return None
@@ -555,16 +552,15 @@ class I:
                 operands = tuple(ops)
         self.operands = operands
         self.inst = inst
-        self.used = False
 
     def from_inst(inst, state):
-        global g_state
-        g_state = state
         mnemonic = formatter.format_mnemonic(inst)
-        operands = [process_operand(inst, i, state) for i in range(formatter.operand_count(inst))]
+        info = info_factory.info(inst)
+        operands = [process_operand(inst, info, i, state) for i in range(formatter.operand_count(inst))]
 
-        modifies = modifies_reg(inst, mnemonic, operands)
+        modifies = modifies_reg(inst, info, mnemonic, operands)
         ir = I(mnemonic, operands, inst)
+
         if modifies:
             reg, expr = modifies
             expr.inst = ir
@@ -573,6 +569,21 @@ class I:
         return ir
 
     def side_effects(self):
+        # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
+        if self.inst.op0_kind == OpKind.NEAR_BRANCH32:
+            # branches are always side-effecting
+            return True
+        info = info_factory.info(self.inst)
+        for mem in info.used_memory():
+            if mem.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
+                return True
+        for reg in info.used_registers():
+            if reg.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
+                if reg.register not in (Register.EAX, Register.ECX, Register.EDX, Register.ESI, Register.EDI):
+                    # for now, we won't consider sub registers like AH, AL, etc to be side-effect free
+                    return True
+
+    def get_side_effects(self):
         # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
         info = info_factory.info(self.inst)
         effects = []
