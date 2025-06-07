@@ -137,7 +137,9 @@ def dump_module(p, module, path):
         while queue:
             ty = queue.pop()
             cls = getattr(ty, '_class', None)
-            cls = getattr(ty, '_def_class', cls)
+            if hasattr(ty, '_definition'):
+                cls = getattr(ty._definition, '_class', cls)
+
 
             if cls:
                 for base in cls.base:

@@ -59,7 +59,8 @@ class Data(Item):
 
     def as_code(self):
         cls = getattr(self.ty, '_class', None)
-        cls = getattr(self.ty, '_def_class', cls)
+        if hasattr(self.ty, '_definition'):
+            cls = getattr(self.ty._definition, '_class', cls)
         s = self.ty.typestr(self.name)
 
         if isinstance(self.sym, codeview.LocalData):

@@ -161,23 +161,25 @@ class Class:
 
     def as_code(self):
         access = None
-
         prefix = "class"
         if self.is_struct:
            access = "public"
            prefix = "struct"
 
-        c = f"{prefix} {self.name}"
+        c = ""
+
+        packed = "packed" if self.packed else "not packed"
+        c += f"{prefix} {self.name}"
 
         if self.fwdref:
-            return c + ";\n"
+            return c + f"; // {packed}, TI: {self.impl.TI:04x}\n"
 
         bases = [f"{b.as_code()}" for b in self.base]
 
         if bases:
             c += f" : {', '.join(bases)}\n"
 
-        c += "{\n"
+        c += f"{{ // {packed}({self.size:#x} bytes) TI: {self.impl.TI:#06x}\n"
 
         for field in self.fields:
             if access != field.access:

@@ -12,7 +12,8 @@ class TypeLeaf(ConstructClass):
     con = None  # Construct class for this type, if applicable
 
     def parsed(self, ctx):
-        self._symbols = set
+        self._symbols = set()
+        self._usage = set()
 
     def linkTIs(self, other, tpi, history=set()):
         if id(self) in history:
@@ -149,6 +150,23 @@ class Bitfield(ConstructClass):
         del self._io
 
         return self
+
+    def copy(self):
+        # Create a copy of the bitfield
+        new = self.__class__.__new__(self.__class__)
+        obj = super().copy()
+        new._apply(obj)
+        return new
+
+    def __eq__(self, other):
+        if self.__class__ != other.__class__:
+            return False
+        for k, v in self.items():
+            if k.startswith("_"):
+                continue
+            if k not in other or other[k] != v:
+                return False
+        return True
 
 class StructProperty(Bitfield):
     # bitfield describing class/struct/union/enum properties
@@ -402,12 +420,6 @@ class LfArray(TypeLeaf):
     #def parsed(self, ctx):
         #assert self.IndexType.value == 17, "Array index type should be uint32_t"
 
-    def parsed(self, ctx):
-        try:
-            pass
-        except AttributeError:
-            pass
-
     def initializer(self, parsed):
         init = self.Type.initializer
         emnts = [init(x) for x in parsed]
@@ -458,8 +470,16 @@ class FrowardRef(TypeLeaf):
     def linkTIs(self, other, tpi):
         TypeLeaf.linkTIs(self, other, tpi)
         if self.properties.fwdref:
-            for ty in tpi.byName[self.Name]:
-                if ty.__class__ == self.__class__ and not ty.properties.fwdref:
+            # The PDB has many duplicate definitions for types.
+            # There are two sources of duplicates:
+            # first, the same type might be defined with different properties, normally packed vs not packed.
+            # second, the incremental compilation keeps older versions of types around.
+
+            # So we need to scan backwards and find the highest definition with matching properties.
+            props = self.properties.copy()
+            props.fwdref = False
+            for ty in reversed(tpi.byName[self.Name]):
+                if ty.__class__ == self.__class__ and ty.properties == props:
                     self._definition = ty
                     ty.addRef(self)
                     return
@@ -480,8 +500,11 @@ class FrowardRef(TypeLeaf):
         return TypeLeaf.__str__(self)
 
     def shortstr(self):
+        packed = "/*packed*/ " if self.properties.packed else "/*unpacked*/ "
+        if isinstance(self, LfEnum):
+            packed = ""
         prefix = self.__class__.__name__[2:].lower()
-        return f"{prefix} {self.Name}"
+        return f"{packed}{prefix} {self.Name}"
 
 
     def is_fwdref(self):
@@ -503,7 +526,7 @@ class LfClass(FrowardRef):
     def type_size(self):
         if self.properties.fwdref:
             cls = getattr(self, '_class', None)
-            cls = getattr(self, '_def_class', cls)
+            cls = getattr(self._definition, '_class', cls)
             if cls:
                 return cls.size
             try:
@@ -536,7 +559,7 @@ class LfClass(FrowardRef):
 
     def as_code(self):
         cls = getattr(self, '_class', None)
-        cls = getattr(self, '_def_class', cls)
+        cls = getattr(self._definition, '_class', cls)
         if cls is None:
             try:
                 cls = self._definition._class
