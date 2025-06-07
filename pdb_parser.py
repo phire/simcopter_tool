@@ -248,8 +248,7 @@ class ProgramData:
         print("parsing types...    ", file=sys.stderr, end='', flush=True)
         now = time.time()
 
-        # The type records are always in stream 2
-        self.types = parse_tpi(msf.getStream(2))
+        self.types = parse_tpi(msf)
         elapsed = int((time.time() - now) * 1000)
         print(f"done, {elapsed} ms", file=sys.stderr)
 

@@ -896,6 +896,14 @@ class TypeRecord(ConstructClass):
         self.Data.TI = idx
         ctx._.types.types.append(self.Data)
 
+# This some kind of skip list that allows implementations to quickly find the TI they are looking for
+# It links to the first whole record after each 8KB boundary
+class Skip(ConstructClass):
+    subcon = Struct(
+        "TI" / Int16ul,
+        "unk" / Int16ul, # Usually in the ranges 0x80-8f or 0xe0-0xef... Might be which mfs page?
+        "off" / Int32ul
+    )
 
 class TypeInfomation(ConstructClass):
     """
@@ -910,7 +918,7 @@ class TypeInfomation(ConstructClass):
 
         # see parseHashes, doesn't seem to have useful infomation
         "HashValueStream" / Int16ul,
-        Padding(2),
+        "Padding" / Const(0, Int16ul), # padding, always 0
         "Records" / Array(this.MaximumTI - this.MinimumTI, TypeRecord)
     )
 
@@ -934,6 +942,26 @@ class TypeInfomation(ConstructClass):
             if isinstance(ty, TypeLeaf):
                 ty.linkTIs(None, ctx.types)
 
+    def parseHashes(self, msf):
+        if self.HashValueStream == 0:
+            return
+
+        numTypes = self.MaximumTI - self.MinimumTI
+
+        stream = msf.getStream(self.HashValueStream)
+
+        # There is one bucket idx (in the range 0 to 4095) per TI
+        # presumably the same hash function as used in GSI
+        self.buckets = list(Array(numTypes, Int16ul).parse_stream(stream))
+
+        skiplist = list(GreedyRange(Skip).parse_stream(stream))
+        self.skiplist = skiplist
+
+        # for o in skiplist:
+        #     print(f"{o.TI:04x} {o.unk:04x} {o.off:08x}")
+        #     print(self.types[o.TI])
+
+
 class Types:
     def __init__(self):
         import base_types
@@ -948,35 +976,15 @@ class Types:
         except KeyError:
             return None
 
-    def parseHashes(self, msf):
-        if self.HashValueStream == 0:
-            return
 
-        numTypes = self.MaximumTI - self.MinimumTI
-
-        stream = msf.getStream(self.HashValueStream)
-
-        # There is one bucket idx (in the range 0 to 4095) per TI
-        # presumably the same hash function as used in GSI
-        buckets = list(Array(numTypes, Int16ul).parse_stream(stream))
-
-        # This some kind of skip list that allows implementations to quickly find the TI they are looking for
-        # It links to the first whole record after each 8KB boundary
-        Skip = Struct(
-            "TI" / Int16ul,
-            "unk" / Int16ul, # might be flags?? Usually in the ranges 0x80-8f or 0xe0-0xef
-            "off" / Int32ul
-        )
-        skiplist = list(GreedyRange(Skip).parse_stream(stream))
-
-        print("\n")
-
-        for o in skiplist:
-            print(f"{o.TI:04x} {o.unk:04x} {o.off:08x}")
-            print(self.types[o.TI])
-
-
-def parse_tpi(stream):
+def parse_tpi(msf):
     tpi = Types()
-    TypeInfomation.parse_stream(stream, types=tpi)
+
+    # The type records are always in stream 2
+    info = TypeInfomation.parse_stream(msf.getStream(2), types=tpi)
+    info.parseHashes(msf)
+
+    tpi.skiplist = info.skiplist
+    tpi.buckets = info.buckets
+
     return tpi
