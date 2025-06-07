@@ -34,3 +34,7 @@ source_override = {
     "io.obj": "io.c",
     "s2global.obj": "s2global.c",
 }
+
+struct_size = {
+    'AutomobileClass': 0x11a,
+}

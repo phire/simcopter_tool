@@ -1,5 +1,7 @@
 
 import time
+import codeview
+from function import Function
 from pdb_parser import ProgramData
 from coff import Executable
 
@@ -97,6 +99,67 @@ if __name__ == "__main__":
 
     dump(p, "gen")
 
+    # all_TIs = set()
+    # for m in p.modules:
+    #     if m.idx == 0:
+    #         all_TIs = set()
+    #     # TIs = set()
+    #     # for i in m.all_items:
+    #     #     if i.ty and i.ty.TI >= 0x1000 and i.ty.TI not in all_TIs and isinstance(Function):
+    #     #         TIs.add(i.ty.TI)
+    #     #         all_TIs.add(i.ty.TI)
+    #     TIs = set()
+    #     for t in m.raw_types:
+    #         if t.TI < 0x1000:
+    #             continue
+
+    #         if any(m.idx != u.module.idx for u in t._usage):
+    #             continue
+    #         TIs.add(t.TI)
+    #     offsets = sorted([c.Offset for c in m.sectionContribs if c.Section == 1])
+    #     low_off = 0
+    #     if offsets:
+    #         low_off = offsets[0]
+
+    #     if not len(TIs):
+    #          print(f"{low_off:06x} - {m.library.name}:{m.name}")
+    #          continue
+    #     lowest = sorted(TIs)[0]
+    #     highest = sorted(TIs)[-1]
+
+
+    #     print(f"{low_off:06x} - {m.library.name}:{m.name}: {" ".join(f"{i:x}" for i in sorted(TIs))}")
+
+
+    # for g in p.globals.symbols:
+    #     if isinstance(g, codeview.PublicData):
+    #         continue
+    #     try:
+    #         if id := g.getModuleId(p):
+    #             module = p.modules[id].name
+    #         else:
+    #             print(g)
+    #             module = "<unknown>"
+
+    #     except AttributeError:
+    #         module = "<no-getid>"
+
+    #     addr = "<no--addr>"
+    #     try:
+    #         if g.Segment and g.Segment != 7:
+    #             addr = f"{p.getAddr(g.Segment, g.Offset):#010x}"
+    #     except AttributeError:
+    #         pass
+
+    #     try:
+    #         TI = g.Type.TI
+    #     except AttributeError:
+    #         TI = 0
+
+    #     cls = g.__class__.__name__
+
+    #     print(f"{addr} {TI:4x} {module} {cls} {g.Name}, {g.refcount} refs")
+
 
     # for inc in includes.values():
     #     print(inc.filename)
@@ -122,4 +185,18 @@ if __name__ == "__main__":
     # dbg = b.modules["sparkal\debug.cpp"]
     # outputString = dbg.functions["CDebugWindow::OutputString"]
     # outputString.disassemble()
+
+    # for (k, v) in sorted(p.types.byName.items(), key=lambda x: 200 - len(x[1])):
+    #     if len(v) <= 2 or k == "__unnamed":
+    #         continue
+    #     print(f"\n{k}: {len(v)}")
+    #     defs = []
+    #     for t in v:
+    #         if hasattr(t, '_def_class'):
+    #             defs.append(t)
+    #     print(" ".join([f"{t.TI:04x}" for t in v]))
+    #     for t in defs:
+    #         cls = t._def_class
+    #         print(f" {t.TI:04x} ({t.properties}) def: {cls.impl.TI:04x} size: {cls.size:#x}")
+
 
