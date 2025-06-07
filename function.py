@@ -1,7 +1,5 @@
-
 from collections import defaultdict
-from itertools import pairwise, chain
-import base_types
+from itertools import pairwise
 import codeview
 from intervaltree import IntervalTree
 
@@ -9,27 +7,15 @@ from item import Data, Item
 import tpi
 import x86
 import pydemangler
-import struct
 from x86 import Mnemonic as M
 from access import Access
 
 import ir
 from ir import *
 
-from enum import Enum
+from usage import TypeUsage
+
 from statement import match_statement, BasicBlock
-
-class TypeUsage(Enum):
-    Unknown = 0
-    Argument = 1
-    Return = 2
-    Local = 3
-    LocalStatic = 4
-    GlobalData = 5
-    Call = 6
-    MemberImpl = 7
-    BaseClass = 8
-
 
 class Argument:
     def __init__(self, name, ty, offset):

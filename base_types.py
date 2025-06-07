@@ -28,9 +28,11 @@ def cast_access(ty, prefix, offset, size):
 class BaseType:
     size = None
     con = None  # Construct class for this type, if applicable
+
     def __init__(self):
         self._refs = set()
         self._symbols = set()
+        self._usage = set()
 
     def __str__(self):
         try:

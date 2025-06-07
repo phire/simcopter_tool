@@ -1,13 +1,12 @@
-
 from pdb_parser import *
 from gsi import *
 import tpi
 from collections import defaultdict
 
-
-from function import Function, TypeUsage
+from function import Function
 from classes import parse_classes
 from item import Item, Data, StringLiterial, ThunkItem, VFTable
+from usage import Usage, TypeUsage
 
 def ext(filename : str):
     try:
@@ -21,57 +20,6 @@ class Include:
         self.modules = []
         self.functions = []
 
-class Usage:
-    def __init__(self, ty, other, mode: TypeUsage):
-        while True:
-            match ty:
-                case tpi.LfPointer():
-                    ty = ty.Type
-                    mode = self.Ptr(ty, mode)
-                case tpi.LfModifier():
-                    ty = ty.Type
-                    mode = self.Modifier(ty, mode)
-                case tpi.LfArray():
-                    ty = ty.Type
-                    mode = self.Array(ty, mode)
-                case _:
-                    break
-        self.ty = ty
-        self.other = other
-        self.mode = mode
-
-
-
-    class Modifier:
-        def __init__(self, modifier_ty, mode):
-            self.modifier_ty = modifier_ty
-            self.mode = mode
-
-        def __repr__(self):
-            return f"Modifier({self.modifier_ty.typestr()}, {self.mode!r})"
-
-    class Ptr:
-        def __init__(self, ptr_ty, mode):
-            self.ptr_ty = ptr_ty
-            self.mode = mode
-
-        def __repr__(self):
-            return f"Ptr({self.ptr_ty.typestr()}, {self.mode!r})"
-
-    class Array:
-        def __init__(self, array_ty, mode):
-            self.array_ty = array_ty
-            self.mode = mode
-
-        def __repr__(self):
-            return f"Array({self.array_ty.typestr()}, {self.mode!r})"
-
-
-    def __repr__(self):
-        return f"Usage({self.ty.typestr()}, {self.other!r} {self.mode!r})"
-
-
-
 class Module:
     # Modules are (typically) .obj files that were linked into the exe
     def __init__(self, program, library, idx, name, symbols, sources, linesInfo, contribs, globs):
@@ -84,6 +32,7 @@ class Module:
         self.all_items = []
         self.unknowns = []
         self.used_types = defaultdict(set)
+        self.raw_types = set()
 
         try:
             self.sourceFile = [s for s in sources if ext(s) in ('cpp', 'c', 'asm') ].pop()
@@ -121,6 +70,22 @@ class Module:
                 continue
 
             address = program.getAddr(g.Segment, g.Offset)
+
+            item = program.getItem(address)
+            if item:
+                continue
+                if item.name == g.Name and item.address == address and item.ty.TI == g.Type.TI and item.sym.visablity == g.visablity:
+                    continue
+                print(f"GlobalData {item.name}/{g.Name} already exists at {item.address:#010x}/{address:#010x}")
+                print(g)
+                print(item.sym)
+                new_type = g.Type
+                if item.ty.TI != new_type.TI:
+                    print(f"Type mismatch: {item.ty.typestr()} {item.ty.TI:#x} != {new_type.typestr()} {new_type.TI:#x}")
+                    # print(new_type)
+                    # print(item.ty)
+                breakpoint()
+
 
             ty = g.Type
             if g.Type:
@@ -195,7 +160,9 @@ class Module:
         if ty.TI == 0:
             return
 
-        usage = Usage(ty, other, mode)
+        usage = Usage(ty, other, mode, self)
+        ty._usage.add(usage)
+        self.raw_types.add(ty)
         self.used_types[usage.ty].add(usage)
 
     def __repr__(self):
