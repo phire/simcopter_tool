@@ -241,6 +241,7 @@ class ProgramData:
 
             # add to interval trees for quick lookup
             section = self.sections[sc.Section]
+
             section.contribs[sc.Offset : sc.Offset + sc.Size] = sc
             sc._data = section.data[sc.Offset : sc.Offset + sc.Size]
 

@@ -25,7 +25,7 @@ def dump(p: Program, dest: str):
     for sym in p.unknownContribs:
         if override := simcopter.unknowns.get(sym.Name):
             # If we have an override, use that.
-            p.modules[override].unknowns += [(sym, None)]
+            p.moduleByName[override.lower()].unknowns += [(sym, None)]
             continue
 
         after = None

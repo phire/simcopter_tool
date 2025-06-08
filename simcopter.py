@@ -24,7 +24,9 @@ libs = {
 }
 
 unknowns = {
-
+    "GlobalError": "error.obj",
+    "_GlobalError": "error.obj",
+    "clone_flag": "cpuid.obj",
 }
 
 source_override = {

@@ -249,6 +249,7 @@ class Program:
 
         self.libraries = { data.exename : top }
         self.modules = []
+        self.moduleByName = {}
         self.extra_globals = []
         self.includes = {}
         self.sections = data.sections
@@ -301,6 +302,7 @@ class Program:
             m = Module(self, library, i, name, symbols, sources, lines, contribs, globs)
 
             self.modules.append(m)
+            self.moduleByName[name.lower()] = m
             library.addModule(m)
 
     def post_process(self):
