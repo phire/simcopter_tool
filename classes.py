@@ -318,11 +318,14 @@ class Member(Field):
 
     def as_code(self):
         c = self.attr_as_code()
+        prefix = f"/*+{self.offset:#x}*/"
         suffix = ""
         if self.synthetic:
             suffix = " // synthetic"
+        elif self.ty.type_size() != 4:
+            suffix = f" // {self.ty.type_size():#x} bytes"
 
-        c += f"{self.ty.typestr(self.name)};{suffix}\n"
+        c += f"{prefix:10} {self.ty.typestr(self.name)};{suffix}\n"
 
         return c
 
