@@ -507,7 +507,10 @@ class Scope:
 
                 self.stack[start:end] = (c.Name, c.Type)
                 if start < 0 and c.Name not in ["this", "__$ReturnUdt", "$initVBases"]:
-                    self.locals.append(("", c.Name, c.Type, None))
+
+                    prefix = f"{ f"/*bp-{-start:#x}*/" :12} "
+                    postfix = "" if size == 4 else f" // {size:#x} bytes"
+                    self.locals.append(("", c.Name, c.Type, prefix, postfix, None))
             elif isinstance(c, codeview.LocalData): # static locals
                 if not c.Type and c.Name == "": # this is a switch table
                     continue
@@ -523,20 +526,20 @@ class Scope:
                             break
                     item = Data(c, p.getAddr(c.Segment, c.Offset), c.Type, contrib=contrib)
                 self.staticlocals[addr:addr + max(size, 1)] = (c.Name, c.Type)
-                self.locals.append(("static const ", c.Name, c.Type, item))
+                self.locals.append(("static const ", c.Name, c.Type, f"// StaticLocal: {addr:#010x}", "", item))
             elif isinstance(c, codeview.UserDefinedType):
-                self.locals.append(("typedef ", c.Name, c.Type, None))
+                self.locals.append(("typedef ", c.Name, c.Type, "", "", None))
 
         self.fn = fn
         self.p = p
 
     def locals_as_code(self):
         s = ""
-        for kw, name, ty, item in self.locals:
+        for kw, name, ty, prefix, postfix, item in reversed(self.locals):
             if item:
-                s += "\t" + item.as_code()
+                s += prefix + "\t" + item.as_code()
             else:
-                s += f"\t{kw}{ty.typestr(name)};\n"
+                s += f"\t{prefix}{kw}{ty.typestr(name)};{postfix}\n"
         return s
 
     def stack_access(self, offset, size):

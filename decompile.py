@@ -1,7 +1,6 @@
 
 import time
 import codeview
-from function import Function
 from pdb_parser import ProgramData
 from coff import Executable
 
