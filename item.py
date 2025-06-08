@@ -5,6 +5,8 @@ import codeview
 import pydemangler
 import construct
 
+import tpi
+
 class Item:
     sym = None
     export = None
@@ -24,6 +26,7 @@ class Item:
             self.contrib = (sym.contrib, sym.contribOffset)
         else:
             self.contrib = (None, None)
+        self.alt_defs = []
 
     def post_process(self):
         # This is called after the module has been fully processed
@@ -57,6 +60,27 @@ class Data(Item):
 
         return self.ty.initializer(parsed)
 
+    def add_altdef(self, alt_sym):
+        is_array = isinstance(self.ty, tpi.LfArray) or isinstance(alt_sym.Type, tpi.LfArray)
+        if not alt_sym.Type or is_array and alt_sym.Type.Size.value == 0:
+            return
+
+        if not self.ty or is_array and self.ty.Size.value == 0:
+            self.ty = alt_sym.Type
+            self.sym = alt_sym
+
+        else:
+            larger_array = is_array and self.ty.Size.value < alt_sym.Type.Size.value
+            has_def = isinstance(self.ty, tpi.FrowardRef) and not self.ty._definition and alt_sym.Type._definition
+            if larger_array or has_def:
+                # if the new type is better than the current one, swap them
+                self.alt_defs.append(self.sym)
+                self.ty = alt_sym.Type
+                self.sym = alt_sym
+            else:
+                self.alt_defs.append(alt_sym)
+
+
     def as_code(self):
         cls = getattr(self.ty, '_class', None)
         if hasattr(self.ty, '_definition'):
@@ -78,6 +102,11 @@ class Data(Item):
             s += f" = {self.initializer()};\n"
         else:
             s += ";\n"
+
+        if self.alt_defs:
+            s += f"// has alternate definitions: (original TI: {self.ty.TI:#x})\n"
+            for alt in self.alt_defs:
+                s += f"//   {alt.Type.typestr(self.name)} (TI: {alt.Type.TI:#x})\n"
 
         return s
 

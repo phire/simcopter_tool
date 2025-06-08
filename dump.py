@@ -147,7 +147,6 @@ def dump_module(p, module, path):
                         queue.add(base.ty)
                     module.use_type(base.ty, cls, TypeUsage.BaseClass)
 
-
         for ty, users in module.used_types.items():
             fwd = ""
             nested = False

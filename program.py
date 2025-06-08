@@ -73,24 +73,17 @@ class Module:
 
             item = program.getItem(address)
             if item:
-                continue
-                if item.name == g.Name and item.address == address and item.ty.TI == g.Type.TI and item.sym.visablity == g.visablity:
+                if item.address != address:
                     continue
-                print(f"GlobalData {item.name}/{g.Name} already exists at {item.address:#010x}/{address:#010x}")
-                print(g)
-                print(item.sym)
-                new_type = g.Type
-                if item.ty.TI != new_type.TI:
-                    print(f"Type mismatch: {item.ty.typestr()} {item.ty.TI:#x} != {new_type.typestr()} {new_type.TI:#x}")
-                    # print(new_type)
-                    # print(item.ty)
-                breakpoint()
+                assert not item.ty or item.ty.TI != g.Type.TI # different type
+                assert item.name == g.Name, f"GlobalData {item.name} != {g.Name} at {address:#010x}"
+                item.add_altdef(g)
+                continue
 
 
             ty = g.Type
             if g.Type:
                 item = Data(g, address, ty)
-                self.use_type(g.Type, item, TypeUsage.GlobalData)
             elif g.Name.startswith('??_C'): # work out type based on name mangling
                 item = StringLiterial(g, address)
             elif g.Name.startswith('??_7'):
@@ -109,6 +102,10 @@ class Module:
                 program.items[item.address: item.address + item.length] = item
             self.all_items += [item]
 
+        for item in self.all_items:
+            self.use_type(item.ty, item, TypeUsage.GlobalData)
+            for alt in item.alt_defs:
+                self.use_type(alt.Type, item, TypeUsage.GlobalDataAlt)
 
         for sym in symbols or []:
             if isinstance(sym, (ObjName, CompileFlags)):
@@ -157,7 +154,7 @@ class Module:
                 raise Exception(f"Unknown root symbol type {sym} in {self.name}")
 
     def use_type(self, ty, other, mode):
-        if ty.TI == 0:
+        if not ty:
             return
 
         usage = Usage(ty, other, mode, self)

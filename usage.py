@@ -10,6 +10,7 @@ class TypeUsage(Enum):
     Call = 6
     MemberImpl = 7
     BaseClass = 8
+    GlobalDataAlt = 9
 
 import tpi
 
