@@ -93,13 +93,13 @@ def match_statement(bblock):
     match bblock.effects:
         case [*head, I("mov", (Mem() as mem, Expression() as expr)) as i]:
             stmt = Assign(mem, expr)
-        case [*head, I("add", (Expression() as expr, Mem() as mem)) as i]:
+        case [*head, I("add", (Mem() as mem, Expression() as expr)) as i]:
             stmt = Modify("+", mem, expr)
-        case [*head, I("sub", (Expression() as expr, Mem() as mem)) as i]:
+        case [*head, I("sub", (Mem() as mem, Expression() as expr)) as i]:
             stmt = Modify("-", mem, expr)
-        case [*head, I("inc", (Mem() as mem,)) as i]:
+        case [*head, I("inc", Mem() as mem) as i]:
             stmt = Increment(mem)
-        case [*head, I("dec", (Mem() as mem,)) as i]:
+        case [*head, I("dec", Mem() as mem) as i]:
             stmt = Decrement(mem)
 
     if not stmt:
