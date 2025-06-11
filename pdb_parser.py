@@ -219,7 +219,22 @@ class ProgramData:
     global and public symbols, and module information.
     Since construct takes a long time to parse, this data is cached between runs.
     """
-    def __init__(self, filename, exe):
+    def __init__(self, filename, exe, timeit=True):
+        if timeit:
+            now = None
+            def timeit(desc):
+                nonlocal now
+                now = time.time()
+                print(f"{desc}...    ", file=sys.stderr, end='', flush=True)
+
+            def done():
+                nonlocal now
+                elapsed = int((time.time() - now) * 1000)
+                print(f"done, {elapsed} ms", file=sys.stderr)
+        else:
+            def timeit(desc): pass
+            def done(): pass
+
         self.exename = Path(filename).stem.upper()
 
         f = open(filename, "rb")
@@ -242,37 +257,27 @@ class ProgramData:
             # add to interval trees for quick lookup
             section = self.sections[sc.Section]
 
-            section.contribs[sc.Offset : sc.Offset + sc.Size] = sc
+            section.contribs[sc.Offset : sc.Offset + max(1, sc.Size)] = sc
             sc._data = section.data[sc.Offset : sc.Offset + sc.Size]
 
-
-        print("parsing types...    ", file=sys.stderr, end='', flush=True)
-        now = time.time()
+        timeit("parsing types")
 
         self.types = parse_tpi(msf)
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
 
-        print("parsing GSI/PGSI... ", file=sys.stderr, end='', flush=True)
-        now = time.time()
+        done()
+        timeit("parsing GSI/PGSI")
 
         self.gsi = Gsi.parse_stream(msf.getStream(dbi.Header.GlobalSymbolStream))
         self.pgsi = Pgsi.parse_stream(msf.getStream(dbi.Header.PublicSymbolStream))
 
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
-
-        print(f"parsing symbols...  ", file=sys.stderr, end='', flush=True)
-        now = time.time()
+        done()
+        timeit(f"parsing symbols")
 
         # The symbol record stream contains all globals (and public globals)
         self.symbols = LoadSymbols(msf.getStream(dbi.Header.SymbolRecordStream), self.types)
 
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
-
-        print(f"parsing modules...  ", file=sys.stderr, end='', flush=True)
-        now = time.time()
+        done()
+        timeit(f"parsing modules")
 
         # parse all modules
         self.modules = []
@@ -303,8 +308,7 @@ class ProgramData:
 
             self.modules.append((modi, sources, contribs, symbols, lines))
 
-        elapsed = int((time.time() - now) * 1000)
-        print(f"done, {elapsed} ms", file=sys.stderr)
+        done()
 
         f.close()
 

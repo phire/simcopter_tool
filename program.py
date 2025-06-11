@@ -279,10 +279,9 @@ class Program:
                 continue
 
             idx = getModuleId(self)
-            if idx:
+            if idx is not None:
                 module_globals[idx].append(sym)
-            elif sym.Segment != 7:
-
+            elif sym.Segment != len(self.sections) - 1:
                 self.extra_globals.append(sym)
 
         # process all modules
@@ -305,7 +304,7 @@ class Program:
             self.moduleByName[name.lower()] = m
             library.addModule(m)
 
-    def post_process(self):
+    def post_process(self, module=None):
         for g in self.extra_globals:
             if isinstance(g, GlobalData):
                 # Todo: These are globals that are not in any module... for some reason
@@ -340,10 +339,13 @@ class Program:
                 else:
                     item.export = g
 
-
-        for m in self.modules:
-            for item in m.all_items:
+        if module is not None:
+            for item in self.modules[module].all_items:
                 item.post_process()
+        else:
+            for m in self.modules:
+                for item in m.all_items:
+                    item.post_process()
 
 
     def getInclude(self, filename):
