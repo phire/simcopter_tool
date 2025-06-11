@@ -14,51 +14,9 @@ import ir
 from ir import *
 
 from usage import TypeUsage
+from scope import Scope
 
 from statement import match_statement, BasicBlock
-
-class Argument:
-    def __init__(self, name, ty, offset):
-        self.name = name
-        self.ty = ty
-        self.offset = offset
-
-    def as_code(self):
-        if self.name:
-            return f"{self.ty.typestr(self.name)}"
-        return self.ty.typestr()
-
-    def __repr__(self):
-        return f"Argument({self.as_code()}, {self.offset:#x})"
-
-class LocalVar:
-    def __init__(self, name, ty, offset):
-        self.name = name
-        self.ty = ty
-        self.offset = offset
-
-    def as_code(self):
-        if self.name:
-            return f"{self.ty.typestr()} {self.name}"
-        return self.ty.typestr()
-
-    def __repr__(self):
-        return f"LocalVar({self.as_code()}, {self.offset:#x})"
-
-class LocalData:
-    def __init__(self, name, ty, address):
-        self.name = name
-        self.ty = ty
-        self.address = address
-
-    def as_code(self):
-        if self.name:
-            return f"static const {self.ty.typestr(self.name)}"
-        return f"static const {self.ty.typestr()}"
-
-    def __repr__(self):
-        return f"LocalData({self.as_code()}, {self.offset:#x})"
-
 
 class VarArgs:
 
@@ -89,31 +47,35 @@ class Line:
         return f"Line({self.offset:#x}, {self.line})"
 
 class SwitchTable:
-    def __init__(self, cv):
+    def __init__(self, cv, offset, fn):
+        self.fn = fn
+        self.offset = offset
         self.cv = cv
         self.data = None  # will be set later
 
     def __repr__(self):
-        return f"SwitchTable({self.cv.Offset:#x}, {self.cv.Length})"
+        return f"SwitchTable({self.fn.name}, {self.offset:#x}, {len(self.data)}"
 
     def as_code(self):
         return f"// Switch table\n"
 
-    def access(self, name, offset, size):
-        return Access(size, f"{name}[{offset//size}]", None, offset=offset)
+    def access(self, offset, size):
+         return Access(size, f"_SwitchTable_{self.offset:x}[{offset//size}]", None, offset=offset)
 
 class SwitchPointers:
-    def __init__(self):
-        self.data = None  # will be set later
+    def __init__(self, address, data, fn):
+        self.fn = fn
+        self.address = address
+        self.data = data
 
     def __repr__(self):
-        return "SwitchPointers()"
+        return f"SwitchPointers({fn.name}, {self.address:#x}, {len(self.data)})"
 
     def as_code(self):
         return f"// Switch pointers\n"
 
-    def access(self, name, offset, size):
-        return Access(size, f"{name}[{offset}]", None, offset=offset)
+    def access(self, offset, size):
+        return Access(size, f"_Switch_{self.address:x}[{offset}]", None, offset=offset)
 
 class BlockStart:
     def __init__(self, cv, scope):
@@ -205,18 +167,6 @@ class Function(Item):
             nonlocal self, module
 
             match child:
-                case codeview.BpRelative():
-                    ty = child.Type
-                    if child.Offset > 0 and child.Name not in ["__$ReturnUdt", "$initVBases"]:
-                        # This is an argument
-                        self.module.use_type(ty, self, TypeUsage.Argument)
-                        self.args.append(Argument(child.Name, ty, child.offsetof))
-
-                    elif child.Offset < 0:
-                        self.module.use_type(ty, self, TypeUsage.Local)
-                        self.local_vars.append(LocalVar(child.Name, ty, child.Offset))
-                    else:
-                        self.module.use_type(ty, self, TypeUsage.Unknown)
                 case codeview.BlockStart():
                     address = program.getAddr(child.Segment, child.Offset)
                     offset = address - self.address
@@ -226,16 +176,11 @@ class Function(Item):
                     for inner_child in child._children:
                         HandleChild(inner_child, new_scope)
                 case codeview.LocalData():
-                    address = program.getAddr(child.Segment, child.Offset)
                     if not child.Type and child.Name == "":
                         # This is a switch table
+                        address = program.getAddr(child.Segment, child.Offset)
                         offset = address - self.address
-                        self.labels[offset].append(SwitchTable(child))
-
-                        return
-                    ty = child.Type
-                    self.module.use_type(ty, self, TypeUsage.LocalStatic)
-                    self.local_vars.append(LocalData(child.Name, ty, address))
+                        self.labels[offset].append(SwitchTable(child, offset, self))
 
                 case codeview.CodeLabel():
                     address = program.getAddr(child.Segment, child.Offset)
@@ -290,6 +235,8 @@ class Function(Item):
                     if ptr:
                         c.Type = ptr[0]
 
+    def deref(self, offset, size):
+        raise ValueError("Function deref not implemented")
 
     def post_process(self):
         if self.contrib:
@@ -331,8 +278,10 @@ class Function(Item):
                     if addr > self.address and addr < self.address + self.length:
                         lines.append((label, addr, size, insts))
                         start = inst.next_ip32 - self.address
-                        insts = data[start:end]
-                        label = [SwitchPointers()]
+                        insts = []
+                        switch = SwitchPointers(start, data[start:end], self)
+                        lines.append(([switch], inst.next_ip32, size, insts))
+                        label = [switch]
                         break
                     else:
                         breakpoint()
@@ -372,8 +321,9 @@ class Function(Item):
                     ir.set_scope(scope)
                 elif isinstance(label, (SwitchPointers, SwitchTable)):
                     skip = True
-                    label.data = raw_insts
-                    scope.staticlocals[addr:addr + size] = (f"{label.__class__.__name__}{addr}", label)
+                    if label.data is None:
+                        label.data = raw_insts
+                    scope.staticlocals[addr:addr + size] = label
 
                     bblocks.append(label)
             if skip:
@@ -485,124 +435,6 @@ class Function(Item):
 
     def __repr__(self):
         return f"Function({self.sig()}, {self.address:#x})"
-
-
-class Scope:
-    def __init__(self, cv, p, fn, outer=None):
-        if outer is not None:
-            self.stack = outer.stack.copy()
-            self.staticlocals = outer.staticlocals.copy()
-        else:
-            self.stack = IntervalTree()
-            self.staticlocals = IntervalTree()
-
-        self.locals = [] # local declarations for this block
-
-        for c in cv._children:
-            if isinstance(c, codeview.BpRelative): # args and locals
-                try: size = max(4, c.Type.type_size())
-                except: size = 4
-
-                start, end = c.Offset, c.Offset + size
-
-                self.stack[start:end] = (c.Name, c.Type)
-                if start < 0 and c.Name not in ["this", "__$ReturnUdt", "$initVBases"]:
-
-                    prefix = f"{ f"/*bp-{-start:#x}*/" :12} "
-                    postfix = "" if size == 4 else f" // {size:#x} bytes"
-                    self.locals.append(("", c.Name, c.Type, prefix, postfix, None))
-            elif isinstance(c, codeview.LocalData): # static locals
-                if not c.Type and c.Name == "": # this is a switch table
-                    continue
-                addr = p.getAddr(c.Segment, c.Offset)
-                size = c.Type.type_size()
-
-                item = p.getItem(addr)
-                if not item:
-                    # find contrib, it will be in this module
-                    for ctrb in fn.module.sectionContribs:
-                        if ctrb.Section == c.Segment and c.Offset >= ctrb.Offset and c.Offset < ctrb.Offset + ctrb.Size:
-                            contrib = (ctrb, c.Offset - ctrb.Offset)
-                            break
-                    item = Data(c, p.getAddr(c.Segment, c.Offset), c.Type, contrib=contrib)
-                self.staticlocals[addr:addr + max(size, 1)] = (c.Name, c.Type)
-                self.locals.append(("static const ", c.Name, c.Type, f"// StaticLocal: {addr:#010x}", "", item))
-            elif isinstance(c, codeview.UserDefinedType):
-                self.locals.append(("typedef ", c.Name, c.Type, "", "", None))
-
-        self.fn = fn
-        self.p = p
-
-    def locals_as_code(self):
-        s = ""
-        for kw, name, ty, prefix, postfix, item in reversed(self.locals):
-            if item:
-                s += prefix + "\t" + item.as_code()
-            else:
-                s += f"\t{prefix}{kw}{ty.typestr(name)};{postfix}\n"
-        return s
-
-    def stack_access(self, offset, size):
-        var = self.stack.at(offset)
-        if not var:
-            return None
-        assert len(var) == 1
-        var = var.pop()
-
-        name, ty = var.data
-        var_off = offset - var.begin
-
-        if ty.TI == 0 and name == "__$ReturnUdt":
-            return name
-        try:
-            return ty.access(name, var_off, size)
-        except ValueError:
-            return None
-
-    def data_access(self, addr, size, offset_expr=None):
-        # might be a static local
-        local = self.staticlocals.at(addr)
-        if local:
-            local = local.pop()
-            name, ty = local.data
-            offset = addr - local.begin
-
-            if not offset and offset_expr:
-                offset = offset_expr
-                offset_expr = None
-            access = ty.access(name, offset, size)
-
-            if offset_expr is not None:
-                reg = offset_expr.expr.reg
-                return f"{access} + [{reg}{offset_expr.scale_str()}]"
-            return access
-
-        # otherwise, try globals
-        item = self.p.getItem(addr)
-        if item:
-            offset = addr - item.address
-            if not offset and offset_expr is not None:
-                offset = offset_expr
-            return item.access(item.name, offset, size)
-        return None
-
-    def code_access(self, pc, addr):
-        fnoffset = addr - self.fn.address
-
-        if fnoffset > 0 and fnoffset < self.fn.length:
-            # within current function
-            if addr in self.fn.targets:
-
-                return f"_T{fnoffset:02x}"
-            return None
-
-        fn = self.p.getItem(addr)
-        if isinstance(fn, Function):
-            return fn
-
-        pass
-
-
 
 class Prolog:
     def __init__(self, line, stack_adjust, this_local=None, cleanup_fn=None):

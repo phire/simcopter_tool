@@ -1,5 +1,5 @@
 
-from access import Access
+from access import Access, ArrayAccess, ScaleExpr
 from construct import *
 
 def cast_access(ty, prefix, offset, size):
@@ -164,6 +164,10 @@ class Bool32FF(BaseType):
     TI = 0x0062
     s = "BOOL32FF"
 
+def deref_pointer(self, prefix, offset, size):
+    ty = types[self.parent.TI]
+    assert ty.type_size() == size
+    return ArrayAccess(prefix, offset, ty)
 
 def derive_pointers(cls):
     pointers = [
@@ -182,6 +186,8 @@ def derive_pointers(cls):
                 "s": f"{cls.s} {code}",
                 "size": size,
                 "con": None,
+                "parent": cls,
+                "deref": deref_pointer,
                 "__doc__": f"{comment} to {cls.__doc__}"
             }
         )
@@ -193,7 +199,7 @@ def derive_pointers(cls):
 class Char(BaseType):
     """8 bit signed"""
     TI = 0x0010
-    s = "char"
+    s = "signed char"
     size = 1
     con = Int8sl
 
@@ -480,21 +486,3 @@ for v in list(globals().values()):
     if isclass(v) and issubclass(v, BaseType) and v is not BaseType:
         types[v.TI] = v()
 
-
-class ScaleExpr:
-    # represents a scaled index
-    def __init__(self, expr, scale):
-        self.expr = expr
-        self.scale = scale
-
-    def __repr__(self):
-        return f"ScaleExpr({self.expr}, {self.scale})"
-
-    def scale_str(self):
-        if self.scale == 1:
-            return ""
-        else:
-            return f" * {self.scale}"
-
-    def as_asm(self):
-        return f"{self.expr.as_asm()}{self.scale_str()}"

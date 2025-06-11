@@ -40,8 +40,16 @@ class Item:
         except AttributeError:
             return None
 
-    def access(self, prefix, offset, size):
-        return self.ty.access(prefix, offset, size)
+    def access(self, offset, size):
+        if not self.ty:
+            raise ValueError(f"can't access {self.name} @ {self.address:#x}, no type defined")
+        return self.ty.access(self, offset, size)
+
+    def __str__(self):
+        return self.name
+
+    def deref(self, offset, size):
+        return self.ty.deref(self, offset, size)
 
 class Data(Item):
     def __init__(self, sym, address, ty, contrib=None):
@@ -148,7 +156,7 @@ class VFTable(Item):
         self.fns = None
         self.p = p
 
-    def access(self, prefix, offset, size):
+    def deref(self, offset, size):
         index = offset // 4
         assert size == 4 and index < len(self.ptrs)
         return self.fns[index]

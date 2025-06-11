@@ -38,7 +38,15 @@ class Assign(Statement):
         return f"{self.target.as_lvalue()} = {self.value.as_rvalue()};"
 
     def __bool__(self):
-        return self.target.is_known() and self.value.is_known()
+        if not self.target.is_known() or not self.value.is_known():
+            return False
+        try:
+            self.as_code()
+        except ValueError:
+            return False
+        except:
+            return False
+        return True
 
 class Modify(Assign):
     def __init__(self, op, target, value):

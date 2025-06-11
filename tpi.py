@@ -447,6 +447,7 @@ class LfArray(TypeLeaf):
         element_size = self.Type.type_size()
 
         if isinstance(offset, ScaleExpr):
+            assert element_size == offset.scale
             index = offset.expr
             var_off = 0
         else:

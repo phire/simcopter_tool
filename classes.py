@@ -330,7 +330,7 @@ class Member(Field):
         return c
 
     def access_field(self, prefix, offset, size):
-        prefix = AccessMember(prefix, self.name, self.ty)
+        prefix = AccessMember(prefix, self)
         return self.ty.access(prefix, offset, size)
 
 class StaticMember(Field):
@@ -466,7 +466,7 @@ class VirtualBase(Field):
 
     def access_field(self, prefix, offset, size):
         # todo: Special Access Base
-        prefix = AccessMember(prefix, self.name, self.ty)
+        prefix = AccessMember(prefix, self)
         return self.ty.access(prefix, offset, size)
 
     def as_code(self):

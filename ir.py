@@ -1,5 +1,4 @@
-from access import ArrayAccess
-from base_types import ScaleExpr
+from access import ArrayAccess, ScaleExpr
 
 scope = None
 
@@ -169,20 +168,28 @@ class Mem(LValue):
 
         if self.base:
             access = self.base.expr.as_lvalue()
-            offset = self.disp
+            if isinstance(access, str):
+                raise ValueError(f"TODO: Base {self.base} is not an Access")
+            # MSVC++ (without optimizations) doesn't seem to use all three at once (other than bp, which doesn't go through here)
             if self.index:
-                offset = f"{self.index.expr.as_rvalue()} * {self.scale} + {offset:x}"
+                assert self.disp == 0
+                offset = ScaleExpr( self.index.expr.as_rvalue(), self.scale)
+            else:
+                offset = self.disp
             return access.deref(offset, self.size)
 
         elif self.disp and not self.index:
-            return self.scope.data_access(self.disp, self.size)
+            access = self.scope.data_ref(self.disp)
+            if not access:
+                raise ValueError(f"Memory at disp {self.disp} not found in scope")
+            return access.deref(0, self.size)
 
         raise ValueError("Cannot convert indexed Mem to LValue")
 
     def as_asm(self):
         access = None
         if self.disp:
-            access = self.scope.data_access(self.disp, self.size)
+            access = self.scope.data_ref(self.disp)
 
         if not access:
             raise ValueError(f"Memory at disp {self.disp} not found in scope")
@@ -199,6 +206,8 @@ class Mem(LValue):
             s += "-" if self.disp < 0 else ""
             s += "+" if self.disp >= 0 or s else ""
             s += f"0x{self.disp:X}"
+
+        access = access.deref(0, self.size)
 
         if s and isinstance(access, ArrayAccess):
             if access.index == 0:
@@ -244,10 +253,10 @@ class MemDisp(Mem):
         return f"MemDisp(size={self.size}, displacement={self.disp})"
 
     def as_code(self):
-        access = self.scope.data_access(self.disp, self.size)
+        access = self.scope.data_ref(self.disp)
         if not access:
             raise ValueError(f"Memory at disp {self.disp} not found in scope")
-        return f"{access}"
+        return f"{access.deref(0, self.size)}"
 
 class MemBaseDisp(Mem):
     __match_args__ = ("base", "disp", "size")
@@ -270,11 +279,11 @@ class MemIndexed(Mem):
 
     def as_code(self):
         offset = ScaleExpr(self.index, self.scale)
-        access = self.scope.data_access(self.disp, self.size, offset_expr=offset)
+        access = self.scope.data_ref(self.disp)
 
         if not access:
             raise ValueError(f"Memory at disp {self.disp} not found in scope")
-        return f"{access}"
+        return f"{access.deref(offset, self.size)}"
 
 class MemComplex(Mem):
     def __init__(self, size, base, index, scale, displacement=0):
@@ -291,18 +300,20 @@ class LocalVar(Mem):
         self.size = size
         self.disp = displacement
         self.scope = scope
-        self.access = scope.stack_access(displacement, size)
+        self.access = scope.stack_ref(displacement)
 
     def __repr__(self):
-        return f"LocalVar({self.disp})"
+        return f"LocalVar({self.disp}, {self.access})"
 
     def as_code(self):
         if not self.access:
             raise ValueError(f"Local variable at {self.disp} not found in scope")
-        return f"{self.access}"
+        return f"{self.access.deref(0, self.size)}"
 
     def as_lvalue(self):
-        return self.access
+        if not self.access:
+            raise ValueError(f"Local variable at {self.disp} not found in scope")
+        return self.access.deref(0, self.size)
 
     def as_asm(self):
         return self.as_code()
@@ -328,6 +339,10 @@ class BinaryOp(RValue):
     def __repr__(self):
         return f"BinaryOp({self.op}, {self.left}, {self.right})"
 
+    def as_lvalue(self):
+         # TODO: BinaryOps can be Lvalues if they are address calculations
+        raise ValueError("Using BinaryOp as LValues not yet implemented")
+
 
 class UnaryOp(RValue):
     __match_args__ = ("op", "operand")
@@ -338,6 +353,35 @@ class UnaryOp(RValue):
     def __repr__(self):
         return f"UnaryOp({self.op}, {self.operand})"
 
+    def as_rvalue(self):
+        raise ValueError(f"as_rvalue not implemented for UnaryOp {self.op} {self.operand}")
+
+class Lea(LValue):
+    def __init__(self, mem):
+        self.mem = mem
+
+    def __repr__(self):
+        return f"Lea({self.mem})"
+
+    def as_lvalue(self):
+        return self.mem.as_lvalue()
+
+    def as_rvalue(self):
+        if isinstance(self.mem, LocalVar):
+            return self.mem.as_lvalue()
+
+        if self.mem.index:
+            expr = BinaryOp("mul", self.mem.index.as_rvalue(), Const(self.mem.scale))
+            if self.mem.base:
+                expr = BinaryOp("add", self.mem.base.as_rvalue(), expr)
+        elif self.mem.base:
+            expr = self.mem.base.as_rvalue()
+        else:
+            breakpoint() # makes no sense
+
+        if self.mem.disp:
+            expr = BinaryOp("add", expr, Const(self.mem.disp))
+        return expr
 
 class NulOp(RValue):
     def __init__(self, op):
@@ -349,43 +393,6 @@ class NulOp(RValue):
     def collect_insts(self, lst):
         pass
 
-class FunctionRef:
-    def __init__(self, fn):
-        self.fn = fn
-
-    def __repr__(self):
-        return f"FunctionRef({self.fn.name})"
-
-    def __eq__(self, other):
-        if isinstance(other, FunctionRef):
-            return self.fn == other.fn
-        if isinstance(other, str):
-            return self.fn.name == other
-        if isinstance(other, int):
-            return self.fn.address == other
-        return False
-
-    def as_code(self):
-       return f"{self.fn.name}"
-
-    def as_asm(self):
-        return f"{self.fn.name}"
-
-class BasicBlockRef:
-    def __init__(self, addr, label, scope):
-        self.label = label
-        self.addr = addr
-        self.scope = scope
-
-    def __repr__(self):
-        return f"BasicBlockRef({self.label})"
-
-    def as_code(self):
-        return self.label
-
-    def as_asm(self):
-        return self.label
-
 class SignExtend(LValue):
     def __init__(self, size, expr):
         self.size = size
@@ -393,6 +400,9 @@ class SignExtend(LValue):
 
     def __repr__(self):
         return f"SignExtend(size={self.size}, expr={self.expr})"
+
+    def as_rvalue(self):
+        return f"reinterpret_cast<int{self.size*8}_t>({self.expr.as_code()})"
 
 class ZeroExtend(LValue):
     def __init__(self, size, expr):
@@ -439,17 +449,10 @@ def process_operand(inst, info, i, state):
 
         case OpKind.NEAR_BRANCH32:
             addr = inst.near_branch32
-            target = scope.code_access(inst.ip32, addr)
+            target = scope.code_ref(inst.ip32, addr)
             if not target:
                 return formatter.format_operand(inst, i)
-
-            if isinstance(target, str):
-                return BasicBlockRef(addr, target, scope)
-            if target.address == addr:
-                return FunctionRef(target)
-            else:
-                offset = addr - target.address
-                return f"{target.name}+{offset:#x}"
+            return target
 
 
         case OpKind.MEMORY if inst.memory_base == Register.EBP and inst.memory_segment == Register.SS and inst.memory_index == Register.NONE:
@@ -525,6 +528,9 @@ def modifies_reg(inst, info, mnenomic, operands):
                 return operands[0], ZeroExtend(regsize(inst.op0_register), operands[1])
 
         elif info.op0_access == OpAccess.WRITE:
+            match inst.mnemonic:
+                case Mnemonic.LEA:
+                    return operands[0], Lea(operands[1])
             return operands[0], UnaryOp(mnenomic, operands[1])
         elif info.op0_access == OpAccess.READ_WRITE:
             # eg Add etc
@@ -534,12 +540,13 @@ def modifies_reg(inst, info, mnenomic, operands):
     if len(operands) == 1 and inst.op0_kind == OpKind.REGISTER:
         # eg. INC reg, DEC reg
         if info.op0_access == OpAccess.READ_WRITE:
+
             return operands[0], UnaryOp(mnenomic, operands[0])
         elif info.op0_access == OpAccess.WRITE:
             # eg pop reg
             return operands[0], NulOp(mnenomic)
 
-        return None
+    return None
 
 class I:
     __match_args__ = ("mnenomic", "operands")
