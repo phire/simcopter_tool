@@ -34,6 +34,8 @@ class Item:
         pass
 
     def data(self):
+        if not self.contrib:
+            return None
         try:
             contrib, offset = self.contrib
             return contrib._data[offset: offset+self.length]

@@ -1,19 +1,37 @@
 
+from iced_x86 import Decoder, Instruction, Code
 import ir
 from ir import *
+import x86
 
 class BasicBlock:
-    def __init__(self, insts, scope, labels):
-        self.insts = insts
+    def __init__(self, labels, scope, start, end):
         self.scope = scope
         self.labels = labels
-        self.effects = [x for x in insts if x.side_effects()]
-        self.statements = insts[:]
+        self.start = start
+        self.end = end
+
+        self.statements = None
+
+
+    def as_code(self):
+        if self.statements:
+            return "\n".join([s.as_code() for s in self.statements]) + "\n"
+        return ir.as_asm(self.data(), self.address(), self.scope)
+
+    def insts(self):
+        state = ir.State()
+        ir.set_scope(self.scope)
+        return [I.from_inst(i, state) for i in x86.disassemble(self.data(), self.address())]
+
+    def data(self):
+        return self.scope.fn.data()[self.start:self.end]
+
+    def empty(self):
+        return self.start == self.end
 
     def address(self):
-        if not self.insts:
-            return None
-        return self.insts[0].inst.ip32
+        return self.scope.fn.address + self.start
 
     def dbg_name(self):
         fn = self.scope.fn
@@ -84,13 +102,12 @@ class Decrement(Statement):
 
 
 def match_statement(bblock):
-    if not bblock.insts:
-        return None
+    insts = bblock.insts()
 
-
+    effects = [x for x in insts if x.side_effects()]
 
     head = stmt = None
-    match bblock.effects:
+    match effects:
         case [*head, I("mov", (Mem() as mem, Expression() as expr)) as i]:
             stmt = Assign(mem, expr)
         case [*head, I("add", (Mem() as mem, Expression() as expr)) as i]:
@@ -121,7 +138,7 @@ def match_statement(bblock):
         # for now, just ignore statements that cannot be converted to code
         return None
 
-    if all([x in used for x in bblock.insts]):
+    if all([x in used for x in insts]):
         return stmt
 
     # print(f"function: {bblock.dbg_name()}")

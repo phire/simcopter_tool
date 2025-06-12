@@ -413,7 +413,7 @@ class ZeroExtend(LValue):
         return f"ZeroExtend(size={self.size}, expr={self.expr})"
 
 
-from iced_x86 import OpKind, Register, Mnemonic, OpAccess, InstructionInfoFactory
+from iced_x86 import Decoder, Instruction, OpKind, Register, Mnemonic, OpAccess, InstructionInfoFactory, Code
 info_factory = InstructionInfoFactory()
 
 from x86 import formatter, REG_TO_STRING, memsize
@@ -423,13 +423,18 @@ def process_operand(inst, info, i, state):
     if op is None:
          return formatter.format_operand(inst, i)
 
-    def get_reg(reg_id):
-        if reg_id == Register.NONE:
-            return None
-        if expr := state.reg.get(reg_id):
-            return expr
-        return Reg(reg_id)
-
+    if state:
+        def get_reg(reg_id):
+            if reg_id == Register.NONE:
+                return None
+            if expr := state.reg.get(reg_id):
+                return expr
+            return Reg(reg_id)
+    else:
+        def get_reg(reg_id):
+            if reg_id == Register.NONE:
+                return None
+            return Reg(reg_id)
 
     match inst.op_kind(op):
         case OpKind.REGISTER:
@@ -632,6 +637,41 @@ class I:
         if ops:
             return f"__asm        {self.mnenomic:6} {", ".join(ops)};"
         return f"__asm        {self.mnenomic};"
+
+def as_asm(data, addr, _scope):
+    global scope
+    scope = _scope
+
+    s = ""
+    decoder = Decoder(32, data, ip=addr)
+    inst = Instruction.create(Code.INVALID)
+
+    while decoder.can_decode:
+        decoder.decode_out(inst)
+
+        mnemonic = formatter.format_mnemonic(inst)
+
+        op_count = formatter.operand_count(inst)
+        if op_count == 0:
+            s += f"__asm        {mnemonic};\n"
+            continue
+
+        ops = []
+        for i in range(formatter.operand_count(inst)):
+            opnd = formatter.get_instruction_operand(inst, i)
+            if opnd is not None and inst.op_kind(opnd) != OpKind.REGISTER:
+                op = process_operand(inst, None, i, None)
+                if isinstance(op, str):
+                    ops.append(op)
+                    continue
+                try:
+                    ops.append(op.as_asm())
+                    continue
+                except ValueError:
+                    pass
+            ops.append(formatter.format_operand(inst, i))
+        s += f"__asm        {mnemonic:6} {", ".join(ops)};\n"
+    return s
 
 class State:
     def __init__(self):

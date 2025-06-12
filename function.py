@@ -1,5 +1,6 @@
 from collections import defaultdict
 from itertools import pairwise
+import textwrap
 
 import construct
 from iced_x86 import Decoder
@@ -57,7 +58,7 @@ class SwitchTable:
         self.data = None  # will be set later
 
     def __repr__(self):
-        return f"SwitchTable({self.fn.name}, {self.offset:#x}, {len(self.data)}"
+        return f"SwitchTable({self.fn.name}, {self.offset:#x}"
 
     def as_code(self):
         return f"// Switch table\n"
@@ -176,20 +177,17 @@ class Function(Item):
         self.args = []
         self.ret = None
 
-        self.args = []
         self.local_vars = []
         self.prolog = None
         self.epilog = None
-        self.targets = set()
-        self.end_of_block = set()
         self.external_targets = set()
 
-        self.labels = defaultdict(list)
+        labels = defaultdict(list)
         for (offset, line) in lines.items():
-            self.labels[offset].append(Line(offset, line))
+            labels[offset].append(Line(offset, line))
 
+        self.staticlocals = IntervalTree()  # static locals for this function
         self.scope = Scope(self.codeview, self.p, self)
-        scopes = []
 
         def HandleChild(child, scope):
             nonlocal self, module
@@ -199,8 +197,8 @@ class Function(Item):
                     address = program.getAddr(child.Segment, child.Offset)
                     offset = address - self.address
                     new_scope = Scope(child, program, self, scope)
-                    self.labels[offset].append(BlockStart(child, new_scope))
-                    self.labels[offset + child.Length].append(BlockEnd(child, scope))
+                    labels[offset].append(BlockStart(child, new_scope))
+                    labels[offset + child.Length].append(BlockEnd(child, scope))
                     for inner_child in child._children:
                         HandleChild(inner_child, new_scope)
                 case codeview.LocalData():
@@ -208,12 +206,12 @@ class Function(Item):
                         # This is a switch table
                         address = program.getAddr(child.Segment, child.Offset)
                         offset = address - self.address
-                        self.labels[offset].append(SwitchTable(child, offset, self))
+                        labels[offset].append(SwitchTable(child, offset, self))
 
                 case codeview.CodeLabel():
                     address = program.getAddr(child.Segment, child.Offset)
                     offset = address - self.address
-                    self.labels[offset].append(Label(child.Name))
+                    labels[offset].append(Label(child.Name))
 
 
         for x in self.codeview.children():
@@ -263,20 +261,28 @@ class Function(Item):
                     if ptr:
                         c.Type = ptr[0]
 
+        self.find_all_basic_blocks(labels)
+
     def deref(self, offset, size):
         raise ValueError("Function deref not implemented")
 
     def getLabel(self, offset):
-        return next((x for x in self.labels[offset] if isinstance(x, Label)), None)
+        if bb := self.body.get(offset, None):
+            return next((x for x in bb.labels if isinstance(x, Label)), None)
+        return None
 
     def post_process(self):
         if self.contrib:
             self.parse_body()
 
-    def find_all_basic_blocks(self):
+    def find_all_basic_blocks(self, labels):
         """Scan the code to find all internal branches and switch tables."""
         data = self.data()
+        if not data:
+            return
+
         addr = self.address
+        targets = set()
 
         decoder = Decoder(32, data, ip=addr)
         while decoder.can_decode:
@@ -291,17 +297,17 @@ class Function(Item):
                             print(f"Larger gap of {target_addr - inst.next_ip32} bytes in function {self.name} at 0x{inst.next_ip32:08x}")
 
                         # find an upper bound for the end. Either the next known target
-                        end = min((x for x in self.targets if x > inst.next_ip32), default=addr + self.length)
+                        end = min((x for x in targets if x > inst.next_ip32), default=addr + self.length)
                         end_offset = end - addr
 
                         switch = SwitchPointers(start, data[start:end_offset], self)
-                        self.labels[start].append(switch)
-                        self.targets.update(switch.targets)
+                        labels[start].append(switch)
+                        targets.update(switch.targets)
 
                         # Get the actual end of the switch table
                         end = target_addr + switch.length
                         end_offset = end - addr
-                        self.targets.add(inst.next_ip32 + switch.length)
+                        labels[end_offset] += []
 
                         # restart decoding after the switch table
                         diff = end - inst.next_ip32
@@ -310,7 +316,7 @@ class Function(Item):
 
                     else:
                         # Reused switch table
-                        switch = self.labels[start][0]
+                        switch = labels[start][0]
                         assert isinstance(switch, SwitchPointers), f"Expected SwitchPointers at {start:#x}, got {switch}"
                 case M.JMP | M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
                     M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
@@ -319,84 +325,63 @@ class Function(Item):
                     if target < self.address or target >= self.address + self.length:
                         self.external_targets.add(target)
                     elif target != inst.next_ip32:
-                        self.targets.add(target)
+                        targets.add(target)
 
                     # End the basic block by inserting a dummy label
                     next_offset = inst.next_ip32 - addr
-                    self.labels[next_offset] += []
+                    labels[next_offset] += []
                 case M.JRCXZ, M.JCXZ, M.JECXZ:
                     assert False, "Unexpected jump instruction: " + inst.mnemonic.name
 
-        for target in self.targets:
+        for target in targets:
             offset = target - self.address
-            if not next((x for x in self.labels[offset] if isinstance(x, Label)), None):
-                self.labels[offset].append(Label(f"_T{offset:02x}"))
+            if not next((x for x in labels[offset] if isinstance(x, Label)), None):
+                labels[offset].append(Label(f"_T{offset:02x}"))
 
-    def disassemble(self):
-        self.find_all_basic_blocks()
-        data = self.data()
-        labels = sorted(self.labels.items(), key=lambda x: x[0])
-        lines = []
-
-        for (start, label), (end, _) in pairwise(labels):
-            addr = self.address + start
-            size = end - start
-            insts = x86.disassemble(data[start:end], addr)
-
-            if insts:
-                lines.append((label, addr, size, insts))
-
-        return lines
-
-    def parse_body(self):
-        ir.set_scope(self.scope)
+        bblocks = dict()
         scope = self.scope
 
-        raw_lines = self.disassemble()
-        bblocks = []
-        for labels, addr, size, raw_insts in raw_lines:
-            skip = False
-            for label in labels:
-                if isinstance(label, BlockStart):
-                    scope = label.scope
-                    ir.set_scope(label.scope)
-                elif isinstance(label, BlockEnd):
-                    scope = label.parent_scope
-                    ir.set_scope(scope)
-                elif isinstance(label, (SwitchPointers, SwitchTable)):
-                    skip = True
-                    if label.data is None:
-                        label.data = raw_insts
-                    scope.staticlocals[addr:addr + size] = label
+        labels = sorted(labels.items(), key=lambda x: x[0])
+        for (start, label), (end, _) in pairwise(labels):
+            if switch := next((x for x in label if isinstance(x, (SwitchPointers, SwitchTable))), None):
 
-                    bblocks.append(label)
-            if skip:
+                if switch.data is None:
+                    switch.data = data[start:end]
+
+                bblocks[start] = switch
+                self.staticlocals[self.address + start:self.address + end] = switch
                 continue
-
-            state = ir.State()
-            insts = []
-            for inst in raw_insts:
-                insts.append(I.from_inst(inst, state))
-
-            bblocks.append(BasicBlock(insts, scope, labels))
-
-        self.prolog, tail  = match_prolog(bblocks.pop(0))
-        if tail:
-            bblocks.insert(0, tail)
-
-        if self.prolog:
-            head, self.epilog = match_epilog(bblocks.pop())
-            assert head is not None
-            bblocks.append(head)
+            elif block := next((x for x in label if isinstance(x, BlockStart)), None):
+                scope = block.scope
+            elif end_block := next((x for x in label if isinstance(x, BlockEnd)), None):
+                scope = end_block.parent_scope
+            bblocks[start] = BasicBlock(label, scope, start, end)
         self.body = bblocks
 
-        for bblock in self.body:
-            if isinstance(bblock, (SwitchPointers, SwitchTable)):
+    def parse_body(self):
+        self.prolog, tail = match_prolog(self.body[0])
+        if tail:
+            self.body[0] = tail # replace the original prolog block to preserve sort order
+        else:
+            del self.body[0]
+
+        if self.prolog:
+            *_, last_key = self.body.keys()
+            last_block = self.body.pop(last_key)
+            head, self.epilog = match_epilog(last_block)
+
+            assert head is not None
+            self.body[head.start] = head
+        if not self.epilog:
+            return
+
+        for bblock in self.body.values():
+            if isinstance(bblock, (SwitchPointers, SwitchTable)) or bblock.empty():
                 # skip switch tables
                 continue
             stmt = match_statement(bblock)
             if stmt:
-                bblock.insts = [stmt]
+                bblock.statements = [stmt]
                 #breakpoint()
 
 
@@ -415,8 +400,6 @@ class Function(Item):
             field = self.ty._field
             return field.synthetic
         return False
-
-
 
     def as_code(self):
         s = "// SYNTHETIC: " if self.is_synthetic() else "// FUNCTION: "
@@ -444,20 +427,19 @@ class Function(Item):
         except:
             body = []
 
-        for bb in body:
+        for bb in body.values():
             if not isinstance(bb, BasicBlock):
                 s += bb.as_code()
                 continue
 
             labels = bb.labels
-            insts = bb.insts
             for label in labels:
                 s += label.as_code()
             if not labels:
                 s += "\n"
 
-            for inst in insts:
-                s += f"\t{inst.as_code()}\n"
+            if not bb.empty():
+                s += textwrap.indent(bb.as_code(), "\t")
 
         if s[-2:] == "\n\n":
             s = s[:-1]
@@ -488,7 +470,7 @@ class Prolog:
 
 def match_prolog(bblock):
 
-    insts = bblock.insts
+    insts = bblock.insts()
 
     match insts:
         case [I("push", "ebp"), I("mov", ("ebp", "esp")), *tail]:
@@ -538,7 +520,8 @@ def match_prolog(bblock):
 
     new_bblock = None
     if tail:
-        new_bblock = BasicBlock(tail, bblock.scope, list())
+        tail_len = tail[-1].inst.next_ip32 - tail[0].inst.ip32
+        new_bblock = BasicBlock(list(), bblock.scope, bblock.end - tail_len, bblock.end)
     return Prolog(bblock.labels, stack_adjust, this_local, cleanup_fn), new_bblock
 
 class Epilog:
@@ -550,7 +533,7 @@ class Epilog:
         return f"Epilog(stack_adjust={self.stack_adjust})"
 
 def match_epilog(bblock):
-    insts = bblock.insts
+    insts = bblock.insts()
 
     match insts:
         case [*head, I("pop", "edi"), I("pop", "esi"), I("pop", "ebx"), I("leave", ()), I("ret", Const() as stack_adjust)]:
@@ -562,7 +545,8 @@ def match_epilog(bblock):
             return bblock, None
 
 
-    new_bblock = BasicBlock(head, bblock.scope, bblock.labels)
+    head_len = head[-1].inst.next_ip32 - head[0].inst.ip32 if head else 0
+    new_bblock = BasicBlock(bblock.labels, bblock.scope, bblock.start, bblock.start+head_len)
     return new_bblock, Epilog(bblock.labels, stack_adjust)
 
 

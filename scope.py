@@ -144,10 +144,8 @@ class Scope:
     def __init__(self, cv, p, fn, outer=None):
         if outer is not None:
             self.stack = outer.stack.copy()
-            self.staticlocals = outer.staticlocals.copy()
         else:
             self.stack = IntervalTree()
-            self.staticlocals = IntervalTree()
 
         self.locals = [] # local declarations for this block
 
@@ -190,7 +188,7 @@ class Scope:
                 fn.module.use_type(c.Type, fn, TypeUsage.LocalStatic)
                 self.locals.append(local)
                 fn.local_vars.append(local)
-                self.staticlocals[addr:addr + max(size, 1)] = local
+                fn.staticlocals[addr:addr + max(size, 1)] = local
             elif isinstance(c, codeview.UserDefinedType):
                 local = LocalTypeDef(c.Name, c.Type)
                 self.locals.append(local)
@@ -219,7 +217,7 @@ class Scope:
 
     def data_ref(self, addr):
         # might be a static local
-        local = self.staticlocals.at(addr)
+        local = self.fn.staticlocals.at(addr)
         if local:
             local = local.pop()
             var_offset = addr - local.begin
@@ -246,8 +244,8 @@ class Scope:
 
         if fnoffset > 0 and fnoffset < self.fn.length:
             # within current function
-            if addr in self.fn.targets:
-                return BasicBlockRef(addr, self.fn.getLabel(fnoffset), self)
+            if label := self.fn.getLabel(fnoffset):
+                return BasicBlockRef(addr, label, self)
             return None
 
         fn = self.p.getItem(addr)
