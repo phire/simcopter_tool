@@ -1,5 +1,6 @@
 
 from iced_x86 import Decoder, Instruction, Code
+import base_types
 import ir
 from ir import *
 import function
@@ -9,6 +10,7 @@ class BasicBlock:
     def __init__(self, labels, scope, start, end):
         self.scope = scope
         self.labels = labels
+        self.label = next((x for x in labels if isinstance(x, function.Label)), None)
         self.start = start
         self.end = end
         self.incomming = set()
@@ -104,6 +106,45 @@ class Decrement(Statement):
         return f"{self.target.as_lvalue()}--;"
 
 
+class Return(Statement):
+    def __init__(self, ty, value):
+        self.ty = ty
+        self.value = value
+
+    def __repr__(self):
+        return f"Return({self.ty}, {self.value})"
+
+    def as_code(self):
+        if not self.value:
+            return "return;"
+        return f"return {self.value.as_rvalue()};"
+
+
+def are_all_insts_used(explicit, exprs, insts):
+    used = set(explicit)
+    def collect_used(expr):
+        nonlocal used
+        if expr.inst:
+            used.add(expr.inst)
+
+    for expr in exprs:
+        expr.visit(collect_used)
+
+
+    # print(f"function: {bblock.dbg_name()}")
+    # for inst in bblock.insts:
+    #     usedstr = " <not used>" if inst not in used else ""
+    #     print(f"  {inst}{usedstr}")
+    # if all([x in used for x in bblock.insts]):
+    #     print(f"matched: {stmt}")
+
+    #     print(f"  code: {stmt.as_code()}")
+    # else:
+    #     print(f"not matched: {stmt}")
+
+    return all([x in used for x in insts])
+
+
 def match_statement(bblock):
     insts = bblock.insts()
 
@@ -125,35 +166,52 @@ def match_statement(bblock):
     if not stmt:
         return None
 
-    used = set([i])
-    def collect_used(expr):
-        nonlocal used
-        if expr.inst:
-            used.add(expr.inst)
-
-    stmt.target.visit(collect_used)
+    exprs = [stmt.target]
     if hasattr(stmt, 'value'):
-        stmt.value.visit(collect_used)
+        exprs.append(stmt.value)
 
-    try:
-        stmt.as_code()
-    except:
-        # for now, just ignore statements that cannot be converted to code
-        return None
-
-    if all([x in used for x in insts]):
-        return stmt
-
-    # print(f"function: {bblock.dbg_name()}")
-    # for inst in bblock.insts:
-    #     usedstr = " <not used>" if inst not in used else ""
-    #     print(f"  {inst}{usedstr}")
-    # if all([x in used for x in bblock.insts]):
-    #     print(f"matched: {stmt}")
-
-    #     print(f"  code: {stmt.as_code()}")
-    # else:
-    #     print(f"not matched: {stmt}")
-
+    if are_all_insts_used([i], exprs, insts):
+        try:
+            stmt.as_code()
+            return stmt
+        except:
+            # for now, just ignore statements that cannot be converted to code
+            return None
     return None
 
+def match_eax_expr(effects):
+    match effects:
+        case [I("mov", (("eax" | "ax" | "al"), Const() as c))]: return c
+        case [I("xor", (("eax" | "ax" | "al") as a, ("eax" | "ax" | "al") as b)) as i] if a == b:
+            c = Const(0)
+            c.inst = i
+            return c
+        case [*_, I("mov", (("eax" | "ax" | "al"), Expression() as expr))]: return expr
+
+
+def match_return(bb, return_ty, return_bb):
+    """ Match a return statement """
+    insts = bb.insts()
+
+    #effects = [x for x in insts if x.side_effects()]
+    match insts:
+        case [*head, I("jmp", dest) as i]:
+            assert dest == return_bb
+        case _: return None
+
+    if return_ty == base_types.Void:
+        if are_all_insts_used([i], [], insts):
+            bb.statements = [Return(return_ty, None)]
+            return True
+
+
+    expr = match_eax_expr(head)
+    if expr is not None and are_all_insts_used([i], [expr], insts):
+        stmt = Return(return_ty, expr)
+        try:
+            stmt.as_code()
+            bb.statements = [stmt]
+            return True
+        except:
+            # for now, just ignore statements that cannot be converted to code
+            pass

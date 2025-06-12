@@ -18,9 +18,9 @@ import ir
 from ir import *
 
 from usage import TypeUsage
-from scope import Scope
+from scope import BasicBlockRef, Scope
 
-from statement import match_statement, BasicBlock
+from statement import match_return, match_statement, BasicBlock
 
 class VarArgs:
 
@@ -199,6 +199,7 @@ class Function(Item):
         self.local_vars = []
         self.prolog = None
         self.epilog = None
+        self.return_bb = None
         self.external_targets = set()
 
         labels = defaultdict(list)
@@ -289,6 +290,10 @@ class Function(Item):
         if bb := self.body.get(offset, None):
             return next((x for x in bb.labels if isinstance(x, Label)), None)
         return None
+
+    def getJumpDest(self, offset):
+        if bb := self.body.get(offset, None):
+            return BasicBlockRef(bb)
 
     def post_process(self):
         if self.contrib:
@@ -425,13 +430,23 @@ class Function(Item):
         if not self.epilog:
             return
 
-        for bblock in self.body.values():
-            if isinstance(bblock, (SwitchPointers, SwitchTable)) or bblock.empty():
+        *_, self.return_bb = self.body.values()
+
+        matched_return = [match_return(bb, self.ret, self.return_bb) for bb in self.return_bb.incomming]
+
+        if all(matched_return):
+            # all returns matched, get rid of the label
+            self.return_bb.labels = [x for x in self.return_bb.labels if not isinstance(x, Label)]
+            self.return_bb.label = None
+
+
+        for bb in self.body.values():
+            if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.statements:
                 # skip switch tables
                 continue
-            stmt = match_statement(bblock)
+            stmt = match_statement(bb)
             if stmt:
-                bblock.statements = [stmt]
+                bb.statements = [stmt]
                 #breakpoint()
 
 
@@ -596,8 +611,9 @@ def match_epilog(bblock):
 
 
     head_len = head[-1].inst.next_ip32 - head[0].inst.ip32 if head else 0
-    new_bblock = BasicBlock(bblock.labels, bblock.scope, bblock.start, bblock.start+head_len)
-    return new_bblock, Epilog(bblock.labels, stack_adjust)
+    bblock.end = bblock.start + head_len
+    line = next((x for x in bblock.labels if isinstance(x, Line)), None)
+    return bblock, Epilog(line, stack_adjust)
 
 
 

@@ -3,6 +3,7 @@ import codeview
 from intervaltree import IntervalTree
 
 from item import Item, Data
+import statement
 from usage import TypeUsage
 
 
@@ -126,19 +127,28 @@ class FunctionRef:
 
 
 class BasicBlockRef:
-    def __init__(self, addr, label, scope):
-        self.label = label
-        self.addr = addr
-        self.scope = scope
+    def __init__(self, bb):
+        self.bb = bb
 
     def __repr__(self):
-        return f"BasicBlockRef({self.label})"
+        return f"BasicBlockRef({self.bb.label})"
 
     def as_code(self):
-        return self.label.name
+        return self.bb.label.name
 
     def as_asm(self):
-        return self.label.name
+        if not self.bb.label:
+            raise ValueError("BasicBlockRef has no label")
+        return self.bb.label.name
+
+    def __eq__(self, other):
+        if isinstance(other, BasicBlockRef):
+            return self.bb == other.bb
+        if isinstance(other, statement.BasicBlock):
+            return self.bb == other
+        if isinstance(other, int):
+            return self.bb.address == other
+        return False
 
 class Scope:
     def __init__(self, cv, p, fn, outer=None):
@@ -244,9 +254,7 @@ class Scope:
 
         if fnoffset > 0 and fnoffset < self.fn.length:
             # within current function
-            if label := self.fn.getLabel(fnoffset):
-                return BasicBlockRef(addr, label, self)
-            return None
+            return self.fn.getJumpDest(fnoffset)
 
         fn = self.p.getItem(addr)
 

@@ -75,6 +75,16 @@ class BaseType:
     def getCon(self):
         return self.con
 
+    def __eq__(self, value):
+        if isinstance(value, BaseType):
+            return self.TI == value.TI
+        if isinstance(value, type(BaseType)):
+            return self.TI == value.TI
+        return False
+
+    def __hash__(self):
+        return hash(self.TI)
+
 # Special types
 
 class NoType(BaseType):

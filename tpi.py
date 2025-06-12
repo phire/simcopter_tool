@@ -66,6 +66,10 @@ class TypeLeaf(ConstructClass):
     def __hash__(self):
         return hash(self.TI)
 
+    def __eq__(self, other):
+        if isinstance(other, TypeLeaf):
+            return self.TI == other.TI
+
     def is_fwdref(self):
         return False
 
