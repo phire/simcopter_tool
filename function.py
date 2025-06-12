@@ -56,15 +56,34 @@ class SwitchTable:
         self.offset = offset
         self.cv = cv
         self.data = None  # will be set later
+        self.pointers = None
+        self.length = None
 
     def __repr__(self):
         return f"SwitchTable({self.fn.name}, {self.offset:#x}"
 
     def as_code(self):
-        return f"// Switch table\n"
+        s = f"// Switch table\n"
+        if not self.data:
+            s += f"//   No data available yet\n"
+        else:
+            s += f"//  [{', '.join(f'{b}' for b in self.data)}]\n"
+        return s
+
 
     def access(self, offset, size):
          return Access(size, f"_SwitchTable_{self.offset:x}[{offset//size}]", None, offset=offset)
+
+    def populate(self, data, pointers):
+        """ Now that we have the corresponding switch pointers, we can probably
+            work out how long this table is"""
+        self.pointers = pointers
+        count = len(pointers.targets)
+        assert count < 256
+        for i, b in enumerate(data):
+            if b >= count: break
+        self.length = i
+        self.data = data[:i]
 
 class SwitchPointers:
     def __init__(self, offset, data, fn):
@@ -307,6 +326,16 @@ class Function(Item):
                         # Get the actual end of the switch table
                         end = target_addr + switch.length
                         end_offset = end - addr
+                        if (table := labels.get(end_offset, None)) and isinstance(table[0], SwitchTable):
+                            table = table[0]
+
+                            start = end_offset
+                            # calculate another upper bound
+                            end = min((x for x in targets if x > end_offset), default=addr + self.length)
+                            table.populate(data[start:end], switch)
+                            end_offset = start + table.length
+                            end = addr + end_offset
+
                         labels[end_offset] += []
 
                         # restart decoding after the switch table
