@@ -135,10 +135,10 @@ class BasicBlockRef:
         return f"BasicBlockRef({self.label})"
 
     def as_code(self):
-        return self.label
+        return self.label.name
 
     def as_asm(self):
-        return self.label
+        return self.label.name
 
 class Scope:
     def __init__(self, cv, p, fn, outer=None):
@@ -247,7 +247,7 @@ class Scope:
         if fnoffset > 0 and fnoffset < self.fn.length:
             # within current function
             if addr in self.fn.targets:
-                return BasicBlockRef(addr, f"_T{fnoffset:02x}", self)
+                return BasicBlockRef(addr, self.fn.getLabel(fnoffset), self)
             return None
 
         fn = self.p.getItem(addr)

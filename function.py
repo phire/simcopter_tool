@@ -1,5 +1,8 @@
 from collections import defaultdict
 from itertools import pairwise
+
+import construct
+from iced_x86 import Decoder
 import codeview
 from intervaltree import IntervalTree
 
@@ -63,19 +66,43 @@ class SwitchTable:
          return Access(size, f"_SwitchTable_{self.offset:x}[{offset//size}]", None, offset=offset)
 
 class SwitchPointers:
-    def __init__(self, address, data, fn):
+    def __init__(self, offset, data, fn):
         self.fn = fn
-        self.address = address
-        self.data = data
+        self.offset = offset
+        self.targets = []
+        end = offset + len(data)
+        for i, t in enumerate(construct.GreedyRange(construct.Int32ul).parse(data)):
+            element_offset = offset + i * 4
+            if element_offset >= end:
+                break
+            if t < end:
+                end = t
+
+            if not (t >= fn.address and t < fn.address + fn.length): # should be within function bounds
+                end = element_offset
+                break
+
+            self.targets.append(t)
+        self.length = end - offset
+        self.data = data[:self.length]
 
     def __repr__(self):
         return f"SwitchPointers({fn.name}, {self.address:#x}, {len(self.data)})"
 
     def as_code(self):
-        return f"// Switch pointers\n"
+        s = f"// Switch pointers:\n"
+        fn_addr = self.fn.address
+        for t in self.targets:
+            label = self.fn.getLabel(t - fn_addr)
+            if not label:
+                s += f"//   0x{t:08x} (no label)\n"
+            else:
+                s += f"//   {label.name}\n"
+        return s
+
 
     def access(self, offset, size):
-        return Access(size, f"_Switch_{self.address:x}[{offset}]", None, offset=offset)
+        return Access(size, f"_Switch_{self.offset:x}[{offset}]", None, offset=offset)
 
 class BlockStart:
     def __init__(self, cv, scope):
@@ -154,6 +181,7 @@ class Function(Item):
         self.prolog = None
         self.epilog = None
         self.targets = set()
+        self.end_of_block = set()
         self.external_targets = set()
 
         self.labels = defaultdict(list)
@@ -238,71 +266,87 @@ class Function(Item):
     def deref(self, offset, size):
         raise ValueError("Function deref not implemented")
 
+    def getLabel(self, offset):
+        return next((x for x in self.labels[offset] if isinstance(x, Label)), None)
+
     def post_process(self):
         if self.contrib:
             self.parse_body()
 
-    def disassemble(self):
+    def find_all_basic_blocks(self):
+        """Scan the code to find all internal branches and switch tables."""
         data = self.data()
+        addr = self.address
 
+        decoder = Decoder(32, data, ip=addr)
+        while decoder.can_decode:
+            inst = decoder.decode()
+
+            match inst.mnemonic:
+                case M.JMP if inst.op_kind(0) == x86.OpKind.MEMORY:
+                    target_addr = inst.memory_displacement
+                    start = target_addr - addr
+                    if target_addr >= inst.next_ip32 and target_addr < self.address + self.length:
+                        if target_addr - inst.next_ip32 > 4:
+                            print(f"Larger gap of {target_addr - inst.next_ip32} bytes in function {self.name} at 0x{inst.next_ip32:08x}")
+
+                        # find an upper bound for the end. Either the next known target
+                        end = min((x for x in self.targets if x > inst.next_ip32), default=addr + self.length)
+                        end_offset = end - addr
+
+                        switch = SwitchPointers(start, data[start:end_offset], self)
+                        self.labels[start].append(switch)
+                        self.targets.update(switch.targets)
+
+                        # Get the actual end of the switch table
+                        end = target_addr + switch.length
+                        end_offset = end - addr
+                        self.targets.add(inst.next_ip32 + switch.length)
+
+                        # restart decoding after the switch table
+                        diff = end - inst.next_ip32
+                        decoder.ip += diff
+                        decoder.position += diff
+
+                    else:
+                        # Reused switch table
+                        switch = self.labels[start][0]
+                        assert isinstance(switch, SwitchPointers), f"Expected SwitchPointers at {start:#x}, got {switch}"
+                case M.JMP | M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
+                    M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
+
+                    target = inst.near_branch32
+                    if target < self.address or target >= self.address + self.length:
+                        self.external_targets.add(target)
+                    elif target != inst.next_ip32:
+                        self.targets.add(target)
+
+                    # End the basic block by inserting a dummy label
+                    next_offset = inst.next_ip32 - addr
+                    self.labels[next_offset] += []
+                case M.JRCXZ, M.JCXZ, M.JECXZ:
+                    assert False, "Unexpected jump instruction: " + inst.mnemonic.name
+
+        for target in self.targets:
+            offset = target - self.address
+            if not next((x for x in self.labels[offset] if isinstance(x, Label)), None):
+                self.labels[offset].append(Label(f"_T{offset:02x}"))
+
+    def disassemble(self):
+        self.find_all_basic_blocks()
+        data = self.data()
         labels = sorted(self.labels.items(), key=lambda x: x[0])
-
         lines = []
 
         for (start, label), (end, _) in pairwise(labels):
             addr = self.address + start
             size = end - start
-
-            insts = []
-            def newbasicblock(inst):
-                nonlocal self, lines, addr, size, label, insts
-
-                assert inst.op_kind(0) == x86.OpKind.NEAR_BRANCH32
-                target = inst.near_branch32
-                if target < self.address or target >= self.address + self.length:
-                    self.external_targets.add(target)
-                elif target != inst.next_ip32:
-                    self.targets.add(target)
-                lines.append((label, addr, size, insts))
-                new_addr = inst.next_ip32
-                size -= new_addr - addr
-                addr = new_addr
-                insts = []
-                label = []
-
-            for inst in x86.disassemble(data[start:end], addr):
-                insts.append(inst)
-                match inst.mnemonic:
-                  case M.JMP if inst.op_kind(0) == x86.OpKind.MEMORY:
-                    addr = inst.memory_displacement
-                    if addr > self.address and addr < self.address + self.length:
-                        lines.append((label, addr, size, insts))
-                        start = inst.next_ip32 - self.address
-                        insts = []
-                        switch = SwitchPointers(start, data[start:end], self)
-                        lines.append(([switch], inst.next_ip32, size, insts))
-                        label = [switch]
-                        break
-                    else:
-                        breakpoint()
-                  case M.JMP:
-                    newbasicblock(inst)
-                  case M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
-                       M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
-                    newbasicblock(inst)
-                  case M.JRCXZ, M.JCXZ, M.JECXZ:
-                    assert False, "Unexpected jump instruction: " + inst.mnemonic.name
-                #   case M.CALL:
-                #     assert inst.op_kind(0) == x86.OpKind.NEAR_BRANCH32
-                #     target = inst.near_branch32
-                #     self.external_targets.add(target)
+            insts = x86.disassemble(data[start:end], addr)
 
             if insts:
                 lines.append((label, addr, size, insts))
 
         return lines
-
-
 
     def parse_body(self):
         ir.set_scope(self.scope)
@@ -332,15 +376,6 @@ class Function(Item):
             state = ir.State()
             insts = []
             for inst in raw_insts:
-                # insert target labels, splitting basic blocks when needed
-                if inst.ip32 in self.targets:
-                    if insts:
-                        bblocks.append(BasicBlock(insts, scope, labels))
-                        labels = []
-                        insts = []
-                        state = ir.State()
-
-                    labels.append(Label(f"_T{inst.ip32 - self.address:02x}"))
                 insts.append(I.from_inst(inst, state))
 
             bblocks.append(BasicBlock(insts, scope, labels))
