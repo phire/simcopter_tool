@@ -2,6 +2,7 @@
 from iced_x86 import Decoder, Instruction, Code
 import ir
 from ir import *
+import function
 import x86
 
 class BasicBlock:
@@ -10,6 +11,8 @@ class BasicBlock:
         self.labels = labels
         self.start = start
         self.end = end
+        self.incomming = set()
+        self.fallthough = None
 
         self.statements = None
 

@@ -301,8 +301,10 @@ class Function(Item):
             return
 
         addr = self.address
-        targets = set()
+        targets = defaultdict(list)
+        fallthough = set()
 
+        # decode all instructions to find jump targets
         decoder = Decoder(32, data, ip=addr)
         while decoder.can_decode:
             inst = decoder.decode()
@@ -321,7 +323,8 @@ class Function(Item):
 
                         switch = SwitchPointers(start, data[start:end_offset], self)
                         labels[start].append(switch)
-                        targets.update(switch.targets)
+                        for target in switch.targets:
+                            targets[target].append(switch)
 
                         # Get the actual end of the switch table
                         end = target_addr + switch.length
@@ -353,39 +356,57 @@ class Function(Item):
                     target = inst.near_branch32
                     if target < self.address or target >= self.address + self.length:
                         self.external_targets.add(target)
-                    elif target != inst.next_ip32:
-                        targets.add(target)
+                    else:
+                        targets[target].append(inst.ip32)
 
                     # End the basic block by inserting a dummy label
                     next_offset = inst.next_ip32 - addr
                     labels[next_offset] += []
+                    if inst.mnemonic != M.JMP:
+                        fallthough.add(inst.next_ip32)
+
                 case M.JRCXZ, M.JCXZ, M.JECXZ:
                     assert False, "Unexpected jump instruction: " + inst.mnemonic.name
 
-        for target in targets:
+        # add targets to the labels dictionary (which already has lines, blocks and predefined labels)
+        for target in targets.keys():
             offset = target - self.address
             if not next((x for x in labels[offset] if isinstance(x, Label)), None):
                 labels[offset].append(Label(f"_T{offset:02x}"))
 
-        bblocks = dict()
+        self.body = dict()
         scope = self.scope
+        intervals = IntervalTree()
 
+        # Put a basic block between each set of labels
         labels = sorted(labels.items(), key=lambda x: x[0])
         for (start, label), (end, _) in pairwise(labels):
             if switch := next((x for x in label if isinstance(x, (SwitchPointers, SwitchTable))), None):
-
                 if switch.data is None:
                     switch.data = data[start:end]
 
-                bblocks[start] = switch
+                self.body[start] = intervals[start:end] = switch
                 self.staticlocals[self.address + start:self.address + end] = switch
                 continue
             elif block := next((x for x in label if isinstance(x, BlockStart)), None):
                 scope = block.scope
             elif end_block := next((x for x in label if isinstance(x, BlockEnd)), None):
                 scope = end_block.parent_scope
-            bblocks[start] = BasicBlock(label, scope, start, end)
-        self.body = bblocks
+            self.body[start] = intervals[start:end] = BasicBlock(label, scope, start, end)
+
+        # Create incoming edges for each basic block
+        for bb in self.body.values():
+            if not isinstance(bb, BasicBlock):
+                continue
+            for incomming in targets[bb.address()]:
+                if isinstance(incomming, int):
+                    # Lookup the basic block from the interval tree
+                    incomming = intervals[incomming - self.address].pop().data
+                bb.incomming.add(incomming)
+            if bb.address() in fallthough:
+                fallthough_bb = intervals[bb.start - 1].pop().data
+                bb.fallthough = fallthough_bb
+
 
     def parse_body(self):
         self.prolog, tail = match_prolog(self.body[0])
