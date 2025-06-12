@@ -199,8 +199,9 @@ class Class:
     def access(self, prefix, offset, size):
         if not isinstance(offset, int):
             # special case for accessing an array that is the first member
-            m = self.members.at(0).pop()
-            return m.data.access_field(prefix, offset, size)
+            m = self.members.at(0).pop().data
+            if isinstance(m.ty, tpi.LfArray) and offset.scale == m.ty.type_size():
+                return m.access_field(prefix, offset, size)
 
         m = self.members.at(offset)
         if not m:
