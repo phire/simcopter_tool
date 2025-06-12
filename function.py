@@ -438,6 +438,10 @@ class Function(Item):
             # all returns matched, get rid of the label
             self.return_bb.labels = [x for x in self.return_bb.labels if not isinstance(x, Label)]
             self.return_bb.label = None
+        else:
+            ret = Label("__RETURN")
+            self.return_bb.labels = [x for x in self.return_bb.labels if not isinstance(x, Label)] + [ret]
+            self.return_bb.label = ret
 
 
         for bb in self.body.values():
