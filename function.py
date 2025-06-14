@@ -316,8 +316,11 @@ class Function(Item):
         if bb := self.body.get(offset, None):
             return BasicBlockRef(bb)
 
+    def is_library(self):
+        return self.source_file and "msdev\\include" in self.source_file.lower()
+
     def post_process(self):
-        if self.contrib:
+        if not self.is_library() and self.contrib:
             self.parse_body()
 
     def find_all_basic_blocks(self, labels):

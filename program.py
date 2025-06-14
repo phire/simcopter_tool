@@ -187,6 +187,9 @@ class Library:
     def is_dll(self):
         return all([ext(m.name) == 'dll' for m in self.modules.values()])
 
+    def is_mslib(self):
+        return 'msdev\\lib' in self.path.lower()
+
     def addModule(self, m):
 
         fullpath = m.sourceFile.lower()
@@ -344,6 +347,8 @@ class Program:
                 item.post_process()
         else:
             for m in self.modules:
+                if m.library.is_dll() or m.library.is_mslib():
+                    continue
                 for item in m.all_items:
                     item.post_process()
 
