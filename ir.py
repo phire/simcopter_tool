@@ -343,6 +343,16 @@ class BinaryOp(RValue):
          # TODO: BinaryOps can be Lvalues if they are address calculations
         raise ValueError("Using BinaryOp as LValues not yet implemented")
 
+    def as_rvalue(self):
+        match self.op:
+            case "add":
+                return f"({self.left.as_rvalue()} + {self.right.as_rvalue()})"
+            case "sub":
+                return f"({self.left.as_rvalue()} - {self.right.as_rvalue()})"
+            case "and":
+                return f"({self.left.as_rvalue()} & {self.right.as_rvalue()})"
+        raise ValueError(f"as_rvalue not implemented for BinaryOp {self.op} {self.left} {self.right}")
+
 
 class UnaryOp(RValue):
     __match_args__ = ("op", "operand")
@@ -425,7 +435,7 @@ class ZeroExtend(LValue):
         return f"ZeroExtend(size={self.size}, expr={self.expr})"
 
 
-from iced_x86 import Decoder, Instruction, OpKind, Register, Mnemonic, OpAccess, InstructionInfoFactory, Code
+from iced_x86 import Decoder, Instruction, OpKind, Register, Mnemonic as M, OpAccess, InstructionInfoFactory, Code
 info_factory = InstructionInfoFactory()
 
 from x86 import formatter, REG_TO_STRING, memsize
@@ -534,20 +544,24 @@ def modifies_reg(inst, info, mnenomic, operands):
             # eg cmp/test
             return None
         if info.op0_access == OpAccess.WRITE and info.op1_access == OpAccess.READ:
-            if inst.mnemonic == Mnemonic.MOV:
+            if inst.mnemonic == M.MOV:
                 # MOV op, reg
                 return operands[0], operands[1]
-            if inst.mnemonic == Mnemonic.MOVSX:
+            if inst.mnemonic == M.MOVSX:
                 # MOVSX op, reg
                 return operands[0], SignExtend(regsize(inst.op0_register), operands[1])
-            if inst.mnemonic == Mnemonic.MOVZX:
+            if inst.mnemonic == M.MOVZX:
                 # MOVZX op, reg
                 return operands[0], ZeroExtend(regsize(inst.op0_register), operands[1])
 
         elif info.op0_access == OpAccess.WRITE:
             match inst.mnemonic:
-                case Mnemonic.LEA:
+                case M.LEA:
                     return operands[0], Lea(operands[1])
+                case M.XOR:
+                    assert operands[0] == operands[1], f"XOR {operands[0]} {operands[1]} not allowed"
+                    return operands[0], Const(0)
+
             return operands[0], UnaryOp(mnenomic, operands[1])
         elif info.op0_access == OpAccess.READ_WRITE:
             # eg Add etc
@@ -565,6 +579,7 @@ def modifies_reg(inst, info, mnenomic, operands):
 
     return None
 
+
 class I:
     __match_args__ = ("mnenomic", "operands")
     def __init__(self, mnenomic, operands, inst=None):
@@ -578,6 +593,14 @@ class I:
         self.inst = inst
 
     def from_inst(inst, state):
+        match inst.mnemonic:
+            case M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
+              M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
+                try:
+                    return JCond(inst, state)
+                except ValueError as e:
+                    pass
+
         mnemonic = formatter.format_mnemonic(inst)
         info = info_factory.info(inst)
         operands = [process_operand(inst, info, i, state) for i in range(formatter.operand_count(inst))]
@@ -590,12 +613,16 @@ class I:
             expr.inst = ir
             state.reg[reg.reg] = Reg(reg.reg, expr, ir)
 
+        if inst.rflags_modified:
+            state.setFlags(ir)
+
         return ir
 
     def side_effects(self):
         # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
         if self.inst.op0_kind == OpKind.NEAR_BRANCH32:
-            # branches are always side-effecting
+            if self.inst.mnemonic == M.JMP:
+                return False
             return True
         info = info_factory.info(self.inst)
         for mem in info.used_memory():
@@ -650,6 +677,9 @@ class I:
             return f"__asm        {self.mnenomic:6} {", ".join(ops)};"
         return f"__asm        {self.mnenomic};"
 
+
+
+
 def as_asm(data, addr, _scope):
     global scope
     scope = _scope
@@ -688,6 +718,7 @@ def as_asm(data, addr, _scope):
 class State:
     def __init__(self):
         self.reg = {}
+        self.flags = None
 
     def get_eax(self, size):
         match size:
@@ -697,6 +728,78 @@ class State:
             case _: reg = None
         return reg.expr if reg else None
 
+    def setFlags(self, inst):
+        # We probably don't need to track each flag individually...
+        # so just track the last instruction that modified the flags
+        self.flags = inst
+
+
 def set_scope(_scope):
     global scope
     scope = _scope
+
+
+class Cond(Expression):
+    def __init__(self, cond, left, right = None):
+        self.cond = cond
+        self.left = left
+        self.expr = right
+
+    def __repr__(self):
+        return f"Cond({self.cond}, {self.left}, {self.expr})"
+
+    def as_rvalue(self):
+        return f"({self.left.as_rvalue()} {self.cond} {self.expr.as_rvalue()})"
+
+class ErrorCond(Expression):
+    def __init__(self, cond):
+        self.cond = cond
+
+    def __repr__(self):
+        return f"ErrorCond({self.cond})"
+
+class JCond(I):
+    __match_args__ = ("cond", "target")
+    def __init__(self, inst: Instruction, state: State):
+        self.inst = inst
+        addr = inst.near_branch32
+        self.target = scope.code_ref(inst.ip32, addr) or formatter.format_operand(inst, 0)
+        self.operands = self.target
+        cmp = state.flags
+        self.mnenomic = formatter.format_mnemonic(inst)
+        if not cmp or inst.rflags_read & cmp.inst.rflags_modified == 0:
+            self.cond = ErrorCond(self.mnenomic)
+            return
+
+        if isinstance(cmp.operands, tuple):
+            left, right = cmp.operands
+        else:
+            left = cmp.operands
+            right = None
+        match cmp.inst.mnemonic, inst.mnemonic:
+            case M.CMP, M.JA | M.JG: self.cond = Cond(">", left, right)
+            case M.CMP, M.JAE | M.JGE: self.cond = Cond(">=", left, right)
+            case M.CMP, M.JB | M.JL: self.cond = Cond("<", left, right)
+            case M.CMP, M.JBE | M.JLE: self.cond = Cond("<=", left, right)
+            case M.CMP, M.JE: self.cond = Cond("==", left, right)
+            case M.CMP, M.JNE: self.cond = Cond("!=", left, right)
+            case M.CMP, _: self.cond = ErrorCond(f"Unexpected flags {self.mnenomic} for {cmp}")
+            case M.TEST, (M.JE | M.JNE) as m:
+                expr = BinaryOp("and", left, right)
+                expr.inst = cmp
+                self.cond = Cond("==" if m == M.JE else "!=", expr, Const(0))
+            case M.TEST, _: self.cond = ErrorCond(f"Unexpected flags {self.mnenomic} for {cmp}")
+            case _, _: self.cond = ErrorCond(f"Unknown {self.mnenomic} for {cmp}")
+            case M.DEC, M.JS: self.cond = Cond("<", left, Const(0))
+
+        self.cond.inst = cmp
+
+    def __repr__(self):
+        if isinstance(self.operands, tuple):
+            return f"I({self.mnenomic} {', '.join(map(str, self.operands))})"
+
+        return f"JCond({self.mnenomic} {self.operands})"
+
+    def side_effects(self):
+        # Changing control flow is a side effect
+        return True
