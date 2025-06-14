@@ -37,6 +37,9 @@ class FakeReturn:
     def typestr(self, name=None):
         return self.s
 
+    def type_size(self):
+        return 4
+
 class Line:
     def __init__(self, offset, line):
         self.offset = offset

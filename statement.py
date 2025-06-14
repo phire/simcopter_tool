@@ -29,6 +29,12 @@ class BasicBlock:
         ir.set_scope(self.scope)
         return [I.from_inst(i, state) for i in x86.disassemble(self.data(), self.address())]
 
+    def decomp(self):
+        state = ir.State()
+        ir.set_scope(self.scope)
+        insts = [I.from_inst(i, state) for i in x86.disassemble(self.data(), self.address())]
+        return state, insts
+
     def data(self):
         return self.scope.fn.data()[self.start:self.end]
 
@@ -179,34 +185,38 @@ def match_statement(bblock):
             return None
     return None
 
-def match_eax_expr(effects):
-    match effects:
-        case [I("mov", (("eax" | "ax" | "al"), Const() as c))]: return c
-        case [I("xor", (("eax" | "ax" | "al") as a, ("eax" | "ax" | "al") as b)) as i] if a == b:
-            c = Const(0)
-            c.inst = i
-            return c
-        case [*_, I("mov", (("eax" | "ax" | "al"), Expression() as expr))]: return expr
-
-
 def match_return(bb, return_ty, return_bb):
     """ Match a return statement """
-    insts = bb.insts()
+    state, insts = bb.decomp()
 
     #effects = [x for x in insts if x.side_effects()]
     match insts:
         case [*head, I("jmp", dest) as i]:
             assert dest == return_bb
-        case _: return None
+        case _: return False
+
+    explict = [i]
 
     if return_ty == base_types.Void:
-        if are_all_insts_used([i], [], insts):
+        if are_all_insts_used(explict, [], insts):
             bb.statements = [Return(return_ty, None)]
             return True
+        return False
 
+    try: size = return_ty.type_size()
+    except: return False
 
-    expr = match_eax_expr(head)
-    if expr is not None and are_all_insts_used([i], [expr], insts):
+    expr = state.get_eax(size)
+    match expr:
+        case UnaryOp("xor", _) as xor:
+            # xor eax, eax
+            expr = Const(0)
+            expr.inst = xor.inst
+        case Lea(mem) as lea:
+            explict += [lea.inst]
+            expr = Refrence(mem)
+
+    if expr is not None and are_all_insts_used(explict, [expr], insts):
         stmt = Return(return_ty, expr)
         try:
             stmt.as_code()
@@ -215,3 +225,4 @@ def match_return(bb, return_ty, return_bb):
         except:
             # for now, just ignore statements that cannot be converted to code
             pass
+    return False

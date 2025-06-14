@@ -99,6 +99,16 @@ class AccessMember(Access):
             raise ValueError(f"Cannot dereference {self} with offset {offset} and size {size}")
         return self.member.ty.deref(self, offset, size)
 
+class AddressOf(Access):
+    def __init__(self, access):
+        self.access = access
+
+    def __str__(self):
+        return f"&{self.access}"
+
+    def as_asm(self):
+        return f"&{self.access.as_asm()}"
+
 
 class ScaleExpr:
     # represents a scaled index

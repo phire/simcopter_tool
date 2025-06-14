@@ -1,4 +1,4 @@
-from access import ArrayAccess, ScaleExpr
+from access import AddressOf, ArrayAccess, ScaleExpr
 
 scope = None
 
@@ -357,6 +357,7 @@ class UnaryOp(RValue):
         raise ValueError(f"as_rvalue not implemented for UnaryOp {self.op} {self.operand}")
 
 class Lea(LValue):
+    __match_args__ = ("mem",)
     def __init__(self, mem):
         self.mem = mem
 
@@ -377,11 +378,22 @@ class Lea(LValue):
         elif self.mem.base:
             expr = self.mem.base.as_rvalue()
         else:
-            breakpoint() # makes no sense
+            raise ValueError("LEA without base or index")
+            expr = self.mem.as_rvalue()
 
         if self.mem.disp:
             expr = BinaryOp("add", expr, Const(self.mem.disp))
         return expr
+
+class Refrence(LValue):
+    def __init__(self, expr):
+        self.expr = expr
+
+    def __repr__(self):
+        return f"Refrence({self.expr})"
+
+    def as_lvalue(self):
+        return AddressOf(self.expr.as_lvalue())
 
 class NulOp(RValue):
     def __init__(self, op):
@@ -676,6 +688,14 @@ def as_asm(data, addr, _scope):
 class State:
     def __init__(self):
         self.reg = {}
+
+    def get_eax(self, size):
+        match size:
+            case 1: reg = self.reg.get(Register.AL)
+            case 2: reg = self.reg.get(Register.AX)
+            case 4: reg = self.reg.get(Register.EAX)
+            case _: reg = None
+        return reg.expr if reg else None
 
 def set_scope(_scope):
     global scope
