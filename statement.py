@@ -15,16 +15,22 @@ class BasicBlock:
         self.end = end
         self.incomming = set()
         self.outgoing = None
-        self.fallthough = None
+        self.fallthrough = None
         self.fallfrom = None
+        self.inlined = None
 
-        self.statements = None
+        self.statements = []
 
 
     def as_code(self):
         if self.statements:
             return "\n".join([s.as_code() for s in self.statements]) + "\n"
+        return self.as_asm()
+
+
+    def as_asm(self):
         return ir.as_asm(self.data(), self.address(), self.scope)
+
 
     def insts(self):
         state = ir.State()
@@ -187,6 +193,72 @@ def match_statement(bblock):
             return None
     return None
 
+def match_cond(bb):
+    """ Match a conditional expression """
+    _, insts = bb.decomp()
+    match [x for x in insts if x.side_effects()]:
+        case [JCond(cond)] as explicit:
+            return cond if are_all_insts_used(explicit, [cond], insts) else None
+
+class TernaryExpr(RValue):
+    def __init__(self, cond, left, right):
+        self.cond = cond
+        self.left = left
+        self.right = right
+
+    def as_rvalue(self):
+        return f"{self.cond.as_rvalue()} ? {self.left.as_rvalue()} : {self.right.as_rvalue()}"
+
+    def __repr__(self):
+        return f"TernaryExpr({self.cond}, {self.left}, {self.right})"
+
+def match_ternary(bb, size):
+    """
+    Match a ternary expression that is used directly with eax.
+    Only seems to be used for return statements
+    """
+
+    incommming = next(iter(bb.incomming), None)
+    cond_bb = incommming.fallfrom if incommming else None
+
+    if not cond_bb or cond_bb.outgoing is not bb.fallfrom:
+        return None, []
+    left_bb = cond_bb.fallthrough
+    right_bb = cond_bb.outgoing
+
+    if len(bb.incomming) != 1:
+        # TODO: There is a nested ternary in the right side
+        #       (nested ternaries on the left side will fail to match the condition)
+        return None, []
+    if len(right_bb.incomming) > 1:
+        # TODO: This seems to happen when the condition of a ternary is an inlined function
+        return None, []
+    assert left_bb.fallthrough is None
+    assert right_bb.fallthrough is bb and right_bb.outgoing is None
+
+    def match_leaf(leaf):
+        state, insts = leaf.decomp()
+        match insts:
+            case [*insts, I('jmp', _)]: pass  # filter out jump instructions
+
+        if expr := state.get_eax(size):
+            if any(x.side_effects() for x in insts if x != expr.inst):
+                # if there are any side effects, we cannot use this expression
+                return None
+
+            assert are_all_insts_used([], [expr], insts)
+            return expr
+
+    if (cond := match_cond(cond_bb)) and \
+      (left := match_leaf(left_bb)) and \
+      (right := match_leaf(right_bb)):
+        match left, right:
+            case Const(1), Const(0): # special case for boolean expressions
+                return cond, [cond_bb, left_bb, right_bb]
+        return TernaryExpr(cond, left, right), [cond_bb, left_bb, right_bb]
+    return None, []
+
+
 def match_return(bb, return_ty, return_bb):
     """ Match a return statement """
     state, insts = bb.decomp()
@@ -207,24 +279,35 @@ def match_return(bb, return_ty, return_bb):
 
     try: size = return_ty.type_size()
     except: return False
+    extra_bbs = []
 
-    expr = state.get_eax(size)
-    match expr:
-        case UnaryOp("xor", _) as xor:
-            # xor eax, eax
-            expr = Const(0)
-            expr.inst = xor.inst
-        case Lea(mem) as lea:
-            explict += [lea.inst]
-            expr = Refrence(mem)
+    if head:
+        match state.get_eax(size):
+            case UnaryOp("xor", _) as xor:
+                # xor eax, eax
+                expr = Const(0)
+                expr.inst = xor.inst
+            case Lea(mem) as lea:
+                explict += [lea.inst]
+                expr = Refrence(mem)
+            case expr: pass
+    else:
+        # if bb.scope.fn.name == "Memory::HIsLocked":
+        #     breakpoint()
+        expr, extra_bbs = match_ternary(bb, size)
+        if expr:
+            print(f"{bb.scope.fn.name}: return {expr.as_rvalue()}")
 
     if expr is not None and are_all_insts_used(explict, [expr], insts):
         stmt = Return(return_ty, expr)
         try:
             stmt.as_code()
-            bb.statements = [stmt]
-            return True
         except:
             # for now, just ignore statements that cannot be converted to code
-            pass
+            return False
+
+        bb.statements = [stmt]
+        for ebb in extra_bbs:
+            ebb.inlined = stmt
+        return True
     return False

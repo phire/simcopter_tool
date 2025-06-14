@@ -328,7 +328,7 @@ class Function(Item):
 
         addr = self.address
         targets = defaultdict(list)
-        fallthough = set()
+        fallthrough = set()
         extern = dict()
 
         # decode all instructions to find jump targets
@@ -390,7 +390,7 @@ class Function(Item):
                     # End the basic block by inserting a dummy label
                     labels[inst.next_ip32 - addr] += []
                     if inst.mnemonic != M.JMP:
-                        fallthough.add(inst.next_ip32)
+                        fallthrough.add(inst.next_ip32)
 
                 case M.JRCXZ, M.JCXZ, M.JECXZ:
                     assert False, "Unexpected jump instruction: " + inst.mnemonic.name
@@ -435,25 +435,25 @@ class Function(Item):
                     incomming.outgoing = bb
                 bb.incomming.add(incomming)
 
-            if bb.address() in fallthough:
-                fallthough_bb = intervals[bb.start - 1].pop().data
-                fallthough_bb.fallthough = bb
-                bb.fallfrom = fallthough_bb
+            if bb.address() in fallthrough:
+                fallthrough_bb = intervals[bb.start - 1].pop().data
+                fallthrough_bb.fallthrough = bb
+                bb.fallfrom = fallthrough_bb
 
         # add extra outgoing edges
         for jump_addr, target in extern.items():
             bb = intervals[jump_addr - self.address].pop().data
             bb.outgoing = ExternalTarget(target)
 
-        # Fixup fallthough edges
+        # Fixup fallthrough edges
         for aa, bb in pairwise(self.body.values()):
             if not isinstance(aa, BasicBlock) or not isinstance(bb, BasicBlock):
                 continue
-            no_fallthough = next((x for x in bb.labels if x is NoFallthrough()), None)
-            if  aa.fallthough or aa.outgoing or no_fallthough:
+            no_fallthrough = next((x for x in bb.labels if x is NoFallthrough()), None)
+            if  aa.fallthrough or aa.outgoing or no_fallthrough:
                 continue
 
-            aa.fallthough = bb
+            aa.fallthrough = bb
             bb.fallfrom = aa
 
     def parse_body(self):
@@ -488,7 +488,7 @@ class Function(Item):
 
 
         for bb in self.body.values():
-            if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.statements:
+            if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.inlined:
                 # skip switch tables
                 continue
             stmt = match_statement(bb)
@@ -547,6 +547,10 @@ class Function(Item):
             labels = bb.labels
             for label in labels:
                 s += label.as_code()
+
+            if bb.inlined:
+                continue
+
             if not labels:
                 s += "\n"
 
