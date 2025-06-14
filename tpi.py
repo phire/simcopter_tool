@@ -947,6 +947,8 @@ class TypeInfomation(ConstructClass):
             if isinstance(ty, TypeLeaf):
                 ty.linkTIs(None, ctx.types)
 
+        ctx.types.finalize()
+
     def parseHashes(self, msf):
         if self.HashValueStream == 0:
             return
@@ -973,6 +975,7 @@ class Types:
         self.types = list(base_types.types)
 
         self.byRecOffset = {}
+        self.byStr = {}
 
 
     def fromOffset(self, offset):
@@ -981,15 +984,33 @@ class Types:
         except KeyError:
             return None
 
+    def finalize(self):
+        self.byStr = defaultdict(list)
+        for ty in self.types:
+            if not ty:
+                continue
+            try: self.byStr[ty.typestr()].append(ty)
+            except: continue
+        self.byStr['int'] = [self.byStr['int32_t'][0]]
+        self.byStr['unsigned int'] = [self.byStr['uint32_t'][0]]
+
+    def fromStr(self, name):
+        """
+        Find a type by its string representation.
+        """
+        if types := self.byStr.get(name):
+            if len(types) == 1:
+                return types[0]
+            breakpoint()
 
 def parse_tpi(msf):
     tpi = Types()
 
     # The type records are always in stream 2
     info = TypeInfomation.parse_stream(msf.getStream(2), types=tpi)
-    info.parseHashes(msf)
+    #info.parseHashes(msf)
 
-    tpi.skiplist = info.skiplist
-    tpi.buckets = info.buckets
+    #tpi.skiplist = info.skiplist
+    #tpi.buckets = info.buckets
 
     return tpi

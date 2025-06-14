@@ -265,8 +265,12 @@ class Function(Item):
 
             # filter out extra stuff
             extra = ("public:", "private:", "protected:", "__thiscall", "__cdecl", "virtual", "static")
-            ret = " ".join([x for x in front.split(" ") if x not in extra])
-            self.ret = FakeReturn(ret)
+            ret = " ".join([x for x in front.split(" ") if x and x not in extra])
+            if ret == "":
+                ret = "void"
+            self.ret = program.types.fromStr(ret)
+            if not self.ret:
+                self.ret = FakeReturn(ret)
 
         for c in self.codeview._children:
             if isinstance(c, codeview.BpRelative) and c.Name == "__$ReturnUdt":
