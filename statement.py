@@ -14,7 +14,9 @@ class BasicBlock:
         self.start = start
         self.end = end
         self.incomming = set()
+        self.outgoing = None
         self.fallthough = None
+        self.fallfrom = None
 
         self.statements = None
 

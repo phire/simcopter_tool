@@ -165,6 +165,20 @@ class Label:
     def as_code(self):
         return f"{self.name}:\n"
 
+class NoFallthrough:
+    def __repr__(self):
+        return "NoFallthrough()"
+
+    def as_code(self):
+        return "// No fallthrough\n"
+
+class ExternalTarget:
+    def __init__(self, address):
+        self.address = address
+
+    def __repr__(self):
+        return f"ExternalTarget(0x{self.address:08x})"
+
 class Function(Item):
     def __init__(self, program, module, cv, lines, contrib):
         self.module = module
@@ -315,6 +329,7 @@ class Function(Item):
         addr = self.address
         targets = defaultdict(list)
         fallthough = set()
+        extern = dict()
 
         # decode all instructions to find jump targets
         decoder = Decoder(32, data, ip=addr)
@@ -368,17 +383,20 @@ class Function(Item):
                     target = inst.near_branch32
                     if target < self.address or target >= self.address + self.length:
                         self.external_targets.add(target)
+                        extern[inst.ip32] = target
                     else:
                         targets[target].append(inst.ip32)
 
                     # End the basic block by inserting a dummy label
-                    next_offset = inst.next_ip32 - addr
-                    labels[next_offset] += []
+                    labels[inst.next_ip32 - addr] += []
                     if inst.mnemonic != M.JMP:
                         fallthough.add(inst.next_ip32)
 
                 case M.JRCXZ, M.JCXZ, M.JECXZ:
                     assert False, "Unexpected jump instruction: " + inst.mnemonic.name
+
+                case M.RET:
+                    labels[inst.next_ip32 - addr] += [NoFallthrough()]
 
         # add targets to the labels dictionary (which already has lines, blocks and predefined labels)
         for target in targets.keys():
@@ -386,9 +404,9 @@ class Function(Item):
             if not next((x for x in labels[offset] if isinstance(x, Label)), None):
                 labels[offset].append(Label(f"_T{offset:02x}"))
 
-        self.body = dict()
         scope = self.scope
         intervals = IntervalTree()
+        self.body = {}
 
         # Put a basic block between each set of labels
         labels = sorted(labels.items(), key=lambda x: x[0])
@@ -414,11 +432,29 @@ class Function(Item):
                 if isinstance(incomming, int):
                     # Lookup the basic block from the interval tree
                     incomming = intervals[incomming - self.address].pop().data
+                    incomming.outgoing = bb
                 bb.incomming.add(incomming)
+
             if bb.address() in fallthough:
                 fallthough_bb = intervals[bb.start - 1].pop().data
-                bb.fallthough = fallthough_bb
+                fallthough_bb.fallthough = bb
+                bb.fallfrom = fallthough_bb
 
+        # add extra outgoing edges
+        for jump_addr, target in extern.items():
+            bb = intervals[jump_addr - self.address].pop().data
+            bb.outgoing = ExternalTarget(target)
+
+        # Fixup fallthough edges
+        for aa, bb in pairwise(self.body.values()):
+            if not isinstance(aa, BasicBlock) or not isinstance(bb, BasicBlock):
+                continue
+            no_fallthough = next((x for x in bb.labels if x is NoFallthrough()), None)
+            if  aa.fallthough or aa.outgoing or no_fallthough:
+                continue
+
+            aa.fallthough = bb
+            bb.fallfrom = aa
 
     def parse_body(self):
         self.prolog, tail = match_prolog(self.body[0])
