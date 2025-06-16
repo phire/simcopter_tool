@@ -354,7 +354,7 @@ class BinaryOp(RValue):
                 return f"({self.left.as_rvalue()} - {self.right.as_rvalue()})"
             case "and":
                 return f"({self.left.as_rvalue()} & {self.right.as_rvalue()})"
-        raise ValueError(f"as_rvalue not implemented for BinaryOp {self.op} {self.left} {self.right}")
+        raise ValueError(f"as_rvalue not implemented for BinaryOp {self.op}")
 
 
 class UnaryOp(RValue):
@@ -389,14 +389,14 @@ class Lea(LValue):
             if self.mem.base:
                 expr = BinaryOp("add", self.mem.base.as_rvalue(), expr)
         elif self.mem.base:
-            expr = self.mem.base.as_rvalue()
+            expr = self.mem.base
         else:
             raise ValueError("LEA without base or index")
             expr = self.mem.as_rvalue()
 
         if self.mem.disp:
             expr = BinaryOp("add", expr, Const(self.mem.disp))
-        return expr
+        return expr.as_rvalue()
 
 class Refrence(LValue):
     def __init__(self, expr):
