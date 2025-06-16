@@ -407,7 +407,7 @@ class Lea(LValue):
 
         if self.mem.disp:
             expr = BinaryOp("add", expr, Const(self.mem.disp))
-        return expr.as_rvalue()
+        return Refrence(expr).as_rvalue()
 
 class Refrence(LValue):
     def __init__(self, expr):
@@ -447,9 +447,14 @@ class CallExpr(Expression):
 
     def as_rvalue(self):
         args = ", ".join(str(arg.as_rvalue()) for arg in self.args)
+        this_expr = ''
         if self.this_expr:
-            return f"{self.this_expr.as_rvalue()}->{self.fn.name}({args})"
-        return f"{self.fn.name}({args})"
+            this_expr = f"{self.this_expr.as_rvalue()}->"
+        if isinstance(self.fn, Expression):
+            fn_name = self.fn.as_lvalue()
+        else:
+            fn_name = self.fn.name
+        return f"{this_expr}{fn_name}({args})"
 
 
     def visit(self, fn):
@@ -661,6 +666,7 @@ class I:
         self.inst = inst
         self.stack_compensate = None
         self.no_effects = False
+        self.expr = None
 
     def from_inst(inst, state):
         mnemonic = formatter.format_mnemonic(inst)
@@ -678,7 +684,7 @@ class I:
                 args = list(state.stack)
 
                 match operands[0]:
-                    case FunctionRef(fn) if reg := fn.return_reg():
+                    case FunctionRef(fn):
                         if not fn.is_thiscall():
                             this_expr = None
                         state.call = expr = CallExpr(fn, args, ir, this_expr)
@@ -692,9 +698,11 @@ class I:
                         if adjust == 0:
                             ir.no_effects = True
 
-                        state.reg[reg] = Reg(reg, expr, ir)
-                    case _:
-                        state.call = expr = CallExpr(None, args, ir, None)
+                        if reg := fn.return_reg():
+                            state.reg[reg] = Reg(reg, expr, ir)
+                    case fn:
+                        state.call = expr = CallExpr(fn, args, ir, this_expr)
+                ir.expr = expr
 
             case M.PUSH:
                 state.push(Pushed(operands[0], ir))

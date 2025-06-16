@@ -85,6 +85,10 @@ class Assign(Statement):
             return False
         return True
 
+    def visit(self, fn):
+        self.target.visit(fn)
+        self.value.visit(fn)
+
 class Modify(Assign):
     def __init__(self, op, target, value):
         self.op = op
@@ -109,6 +113,9 @@ class Increment(Statement):
     def as_code(self):
         return f"{self.target.as_lvalue()}++;"
 
+    def visit(self, fn):
+        self.target.visit(fn)
+
 class Decrement(Statement):
     def __init__(self, target):
         self.target = target
@@ -118,6 +125,9 @@ class Decrement(Statement):
 
     def as_code(self):
         return f"{self.target.as_lvalue()}--;"
+
+    def visit(self, fn):
+        self.target.visit(fn)
 
 
 class Return(Statement):
@@ -132,6 +142,22 @@ class Return(Statement):
         if not self.value:
             return "return;"
         return f"return {self.value.as_rvalue()};"
+
+    def visit(self, fn):
+        self.value.visit(fn)
+
+class ExprStatement(Statement):
+    def __init__(self, expr):
+        self.expr = expr
+
+    def __repr__(self):
+        return f"ExprStatement({self.expr})"
+
+    def as_code(self):
+        return f"{self.expr.as_rvalue()};"
+
+    def visit(self, fn):
+        self.expr.visit(fn)
 
 
 def are_all_insts_used(explicit, exprs, insts, bblock=None):
@@ -182,8 +208,8 @@ def match_statement(bblock):
     stmts = []
     while insts:
         match insts.pop():
-            case I("jmp", dest) as i:
-                stmts.append(i)
+            case I("jmp", _) as jmp:
+                stmts.append(jmp)
                 continue # filter out jump instructions
             case I("mov", (Mem() as mem, Expression() as expr)):
                 stmt = Assign(mem, expr)
@@ -195,12 +221,12 @@ def match_statement(bblock):
                 stmt = Increment(mem)
             case I("dec", Mem() as mem):
                 stmt = Decrement(mem)
+            case I("call") as call:
+                stmt = ExprStatement(call.expr)
+            case I("add", ("esp", _)) as cleanup if insts and not cleanup.side_effects():
+                continue
             case _:
                 return None
-
-        exprs = [stmt.target]
-        if hasattr(stmt, 'value'):
-            exprs.append(stmt.value)
 
         try:
             stmt.as_code()
@@ -209,7 +235,7 @@ def match_statement(bblock):
             # for now, just ignore bblocks that cannot be converted to code
             return None
         try:
-            insts = consume_insts(exprs, insts)
+            insts = consume_insts([stmt], insts)
         except ValueError as e:
             return None
 
