@@ -134,7 +134,7 @@ class Return(Statement):
         return f"return {self.value.as_rvalue()};"
 
 
-def are_all_insts_used(explicit, exprs, insts):
+def are_all_insts_used(explicit, exprs, insts, bblock=None):
     used = set(explicit)
     def collect_used(expr):
         nonlocal used
@@ -144,17 +144,11 @@ def are_all_insts_used(explicit, exprs, insts):
     for expr in exprs:
         expr.visit(collect_used)
 
-
-    # print(f"function: {bblock.dbg_name()}")
-    # for inst in bblock.insts:
-    #     usedstr = " <not used>" if inst not in used else ""
-    #     print(f"  {inst}{usedstr}")
-    # if all([x in used for x in bblock.insts]):
-    #     print(f"matched: {stmt}")
-
-    #     print(f"  code: {stmt.as_code()}")
-    # else:
-    #     print(f"not matched: {stmt}")
+    if bblock:
+        print(f"function: {bblock.dbg_name()}")
+        for inst in insts:
+            usedstr = " <not used>" if inst not in used else ""
+            print(f"  {inst}{usedstr}")
 
     return all([x in used for x in insts])
 
@@ -199,18 +193,6 @@ def match_cond(bb):
     match [x for x in insts if x.side_effects()]:
         case [JCond(cond)] as explicit:
             return cond if are_all_insts_used(explicit, [cond], insts) else None
-
-class TernaryExpr(RValue):
-    def __init__(self, cond, left, right):
-        self.cond = cond
-        self.left = left
-        self.right = right
-
-    def as_rvalue(self):
-        return f"{self.cond.as_rvalue()} ? {self.left.as_rvalue()} : {self.right.as_rvalue()}"
-
-    def __repr__(self):
-        return f"TernaryExpr({self.cond}, {self.left}, {self.right})"
 
 def match_ternary(bb, size):
     """
@@ -292,11 +274,7 @@ def match_return(bb, return_ty, return_bb):
                 expr = Refrence(mem)
             case expr: pass
     else:
-        # if bb.scope.fn.name == "Memory::HIsLocked":
-        #     breakpoint()
         expr, extra_bbs = match_ternary(bb, size)
-        if expr:
-            print(f"{bb.scope.fn.name}: return {expr.as_rvalue()}")
 
     if expr is not None and are_all_insts_used(explict, [expr], insts):
         stmt = Return(return_ty, expr)

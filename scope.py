@@ -5,6 +5,7 @@ from intervaltree import IntervalTree
 from item import Item, Data
 import statement
 from usage import TypeUsage
+from ref import FunctionRef, RefTo
 
 
 class Local:
@@ -15,6 +16,7 @@ class Local:
         self.size = size
         self.scope = scope
         self.fn = fn
+        self.hidden = False
 
     def __str__(self):
         return self.name
@@ -51,6 +53,7 @@ class Argument(Local):
     def __repr__(self):
         return f"Argument({self.as_code()}, {self.bp_offset:#x})"
 
+
 class LocalData(Local):
     def __init__(self, name, ty, size, scope, fn, item):
         super().__init__(name, ty, 0, size, scope, fn)
@@ -76,79 +79,6 @@ class LocalTypeDef:
     def postfix(self):
         return ""
 
-class RefTo:
-    def __init__(self, var, offset):
-        self.var = var
-        self.offset = offset
-
-    def __str__(self):
-        if isinstance(self.offset, int):
-            offset = f"{self.offset:#x}"
-        else:
-            offset = str(self.offset)
-        return f"{self.var}<+{offset}>"
-
-    def as_asm(self):
-        return f"{self.var.as_asm()}[{self.offset}]"
-
-    def access(self, offset, size):
-        breakpoint()
-        assert self.offset == 0 and offset == 0 and size == 4
-        return self
-
-    def deref(self, offset, size):
-        return self.var.access(self.offset + offset, size)
-
-
-class FunctionRef:
-    def __init__(self, fn, offset=0):
-        self.fn = fn
-        self.offset = offset
-
-    def __repr__(self):
-        return f"FunctionRef({self.fn.name})"
-
-    def __eq__(self, other):
-        if isinstance(other, FunctionRef):
-            return self.fn == other.fn
-        if isinstance(other, str):
-            return self.fn.name == other
-        if isinstance(other, int):
-            return self.fn.address == other
-        return False
-
-    def as_code(self):
-       if self.offset:
-            return f"{self.fn.name}+{self.offset:#x}"
-       return f"{self.fn.name}"
-
-    def as_asm(self):
-        return self.as_code()
-
-
-class BasicBlockRef:
-    def __init__(self, bb):
-        self.bb = bb
-
-    def __repr__(self):
-        return f"BasicBlockRef({self.bb.label})"
-
-    def as_code(self):
-        return self.bb.label.name
-
-    def as_asm(self):
-        if not self.bb.label:
-            raise ValueError("BasicBlockRef has no label")
-        return self.bb.label.name
-
-    def __eq__(self, other):
-        if isinstance(other, BasicBlockRef):
-            return self.bb == other.bb
-        if isinstance(other, statement.BasicBlock):
-            return self.bb == other
-        if isinstance(other, int):
-            return self.bb.address == other
-        return False
 
 class Scope:
     def __init__(self, cv, p, fn, outer=None):
@@ -164,17 +94,16 @@ class Scope:
                 try: size = max(4, c.Type.type_size())
                 except: size = 4
 
-                if c.Name in ["this", "__$ReturnUdt", "$initVBases"]:
-                    local = LocalVar(c.Name, c.Type, c.Offset, size, self, fn)
-                    fn.local_vars.append(local)
-                elif c.Offset < 0:
+                if c.Offset < 0:
                     local = LocalVar(c.Name, c.Type, c.Offset, size, self, fn)
                     fn.local_vars.append(local)
                     fn.module.use_type(c.Type, fn, TypeUsage.Local)
-
-                    self.locals.append(local)
+                    if c.Name != "this":
+                        self.locals.append(local)
                 else:
                     local = Argument(c.Name, c.Type, c.Offset, size, self, fn)
+                    if c.Name in ["__$ReturnUdt", "$initVBases"]:
+                        local.hidden = True
                     fn.module.use_type(c.Type, fn, TypeUsage.Argument)
                     fn.args.append(local)
 
@@ -258,7 +187,9 @@ class Scope:
 
         fn = self.p.getItem(addr)
 
-        if fn:
+        if isinstance(fn, Data):
+            breakpoint()
+        if fn and not isinstance(fn, Data):
             return FunctionRef(fn, addr - fn.address)
         return None
 

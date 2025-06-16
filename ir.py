@@ -1,4 +1,5 @@
 from access import AddressOf, ArrayAccess, ScaleExpr
+from ref import FunctionRef, BasicBlockRef
 
 scope = None
 
@@ -44,10 +45,12 @@ class Store(Statement):
 
 
 class Reg(Expression):
-    def __init__(self, reg, expr=None, inst=None):
+    def __init__(self, reg, expr: Expression=None, inst=None):
         self.reg = reg
         self.expr = expr
         self.inst = inst # The instruction that wrote to this register
+        if expr:
+            expr.inst = inst
 
     def __repr__(self):
         if self.expr:
@@ -405,6 +408,54 @@ class Refrence(LValue):
     def as_lvalue(self):
         return AddressOf(self.expr.as_lvalue())
 
+
+class Pushed(Expression):
+    def __init__(self, expr, inst):
+        self.expr = expr
+        self.inst = inst
+
+    def __repr__(self):
+        return f"Pushed({self.expr})"
+
+    def as_lvalue(self):
+        return self.expr.as_lvalue()
+
+    def as_rvalue(self):
+        return self.expr.as_rvalue()
+
+class CallExpr(Expression):
+    def __init__(self, fn, args, inst):
+        self.fn = fn
+        self.args = args
+        self.inst = inst
+        self.adjust_expr = None
+
+    def __repr__(self):
+        return f"Call({self.fn}, args={self.args})"
+
+    def as_rvalue(self):
+        args = ", ".join(str(arg.as_rvalue()) for arg in self.args)
+        return f"{self.fn.name}({args})"
+
+    def visit(self, fn):
+        fn(self)
+        if self.adjust_expr:
+            self.adjust_expr.visit(fn)
+        for arg in self.args:
+            arg.visit(fn)
+
+class TernaryExpr(RValue):
+    def __init__(self, cond, left, right):
+        self.cond = cond
+        self.left = left
+        self.right = right
+
+    def as_rvalue(self):
+        return f"{self.cond.as_rvalue()} ? {self.left.as_rvalue()} : {self.right.as_rvalue()}"
+
+    def __repr__(self):
+        return f"TernaryExpr({self.cond}, {self.left}, {self.right})"
+
 class NulOp(RValue):
     def __init__(self, op):
         self.op = op
@@ -582,7 +633,7 @@ def modifies_reg(inst, info, mnenomic, operands):
 
 class I:
     __match_args__ = ("mnenomic", "operands")
-    def __init__(self, mnenomic, operands, inst=None):
+    def __init__(self, mnenomic, operands, inst: Instruction=None):
         self.mnenomic = mnenomic
         match operands:
             case [op]:
@@ -591,41 +642,78 @@ class I:
                 operands = tuple(ops)
         self.operands = operands
         self.inst = inst
+        self.stack_compensate = None
+        self.no_effects = False
 
     def from_inst(inst, state):
-        match inst.mnemonic:
-            case M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
-              M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
-                try:
-                    return JCond(inst, state)
-                except ValueError as e:
-                    pass
-
         mnemonic = formatter.format_mnemonic(inst)
         info = info_factory.info(inst)
         operands = [process_operand(inst, info, i, state) for i in range(formatter.operand_count(inst))]
 
-        modifies = modifies_reg(inst, info, mnemonic, operands)
         ir = I(mnemonic, operands, inst)
+        match inst.mnemonic:
+            case M.JA | M.JAE | M.JB | M.JBE | M.JE | M.JG | M.JGE | M.JL | \
+              M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
+                return JCond(inst, state)
+            case M.CALL:
+                state.clear()
+                args = list(state.stack)
 
-        if modifies:
-            reg, expr = modifies
-            expr.inst = ir
-            state.reg[reg.reg] = Reg(reg.reg, expr, ir)
+                match operands[0]:
+                    case FunctionRef(fn) if reg := fn.return_reg():
+                        state.call = expr = CallExpr(fn, args, ir)
+                        adjust = fn.stack_adjust
+                        while adjust and state.stack and (expr := state.stack.pop()):
+                            i = expr.inst
+                            adjust += i.inst.stack_pointer_increment
+                            assert adjust >= 0
+                            i.stack_compensate = ir
+                            i.no_effects = True
+                        if adjust == 0:
+                            ir.no_effects = True
 
-        if inst.rflags_modified:
-            state.setFlags(ir)
+                        state.reg[reg] = Reg(reg, expr, ir)
+                    case _:
+                        state.call = expr = CallExpr(None, args, ir)
+
+            case M.PUSH:
+                state.push(Pushed(operands[0], ir))
+            case M.ADD if inst.op0_register == Register.ESP and inst.op0_kind == OpKind.REGISTER and inst.op1_kind >= OpKind.IMMEDIATE8:
+                adjust = inst.immediate(1)
+                if state.call:
+                    adjust_expr = Const(adjust)
+                    adjust_expr.inst = ir
+                    state.call.adjust_expr = adjust_expr
+                if (sum(i.inst.inst.stack_pointer_increment for i in state.stack) + adjust) == 0:
+                    for i in [e.inst for e in state.stack]:
+                        i.stack_compensate = ir
+                        i.no_effects = True
+                    state.stack.clear()
+                    ir.no_effects = True
+
+            case _:
+                modifies = modifies_reg(inst, info, mnemonic, operands)
+                if modifies:
+                    reg, expr = modifies
+                    state.reg[reg.reg] = Reg(reg.reg, expr, ir)
+
+                if inst.rflags_modified:
+                    state.setFlags(ir)
 
         return ir
 
     def side_effects(self):
         # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
+        if self.no_effects:
+            return False
         if self.inst.op0_kind == OpKind.NEAR_BRANCH32:
             if self.inst.mnemonic == M.JMP:
                 return False
             return True
         info = info_factory.info(self.inst)
         for mem in info.used_memory():
+            if mem.segment == Register.SS and self.stack_compensate:
+                continue
             if mem.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
                 return True
         for reg in info.used_registers():
@@ -633,23 +721,7 @@ class I:
                 if reg.register not in (Register.EAX, Register.ECX, Register.EDX, Register.ESI, Register.EDI):
                     # for now, we won't consider sub registers like AH, AL, etc to be side-effect free
                     return True
-
-    def get_side_effects(self):
-        # side effects are instructions that modify memory or any registers other than eax, ecx, edx, esi, edi
-        info = info_factory.info(self.inst)
-        effects = []
-        if self.inst.op0_kind == OpKind.NEAR_BRANCH32:
-            # branches are always side-effecting
-            effects.append("branch")
-        for mem in info.used_memory():
-            if mem.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
-                effects.append("memory")
-        for reg in info.used_registers():
-            if reg.access in (OpAccess.WRITE, OpAccess.READ_WRITE, OpAccess.COND_WRITE, OpAccess.READ_COND_WRITE):
-                if reg.register not in (Register.EAX, Register.ECX, Register.EDX, Register.ESI, Register.EDI):
-                    # for now, we won't consider sub registers like AH, AL, etc to be side-effect free
-                    effects.append(REG_TO_STRING[reg.register])
-        return effects
+        return False
 
     def __repr__(self):
         if isinstance(self.operands, tuple):
@@ -719,6 +791,13 @@ class State:
     def __init__(self):
         self.reg = {}
         self.flags = None
+        self.stack = []
+        self.call = None  # The last call instruction, if any
+
+    def clear(self):
+        self.reg.clear()
+        self.flags = None
+        self.call = None
 
     def get_eax(self, size):
         match size:
@@ -732,6 +811,9 @@ class State:
         # We probably don't need to track each flag individually...
         # so just track the last instruction that modified the flags
         self.flags = inst
+
+    def push(self, expr):
+        self.stack.append(expr)
 
 
 def set_scope(_scope):
@@ -785,7 +867,10 @@ class JCond(I):
             case M.CMP, M.JNE: self.cond = Cond("!=", left, right)
             case M.CMP, _: self.cond = ErrorCond(f"Unexpected flags {self.mnenomic} for {cmp}")
             case M.TEST, (M.JE | M.JNE) as m:
-                expr = BinaryOp("and", left, right)
+                if left == right:
+                    expr = left
+                else:
+                    expr = BinaryOp("and", left, right)
                 expr.inst = cmp
                 self.cond = Cond("==" if m == M.JE else "!=", expr, Const(0))
             case M.TEST, _: self.cond = ErrorCond(f"Unexpected flags {self.mnenomic} for {cmp}")
@@ -800,6 +885,7 @@ class JCond(I):
 
         return f"JCond({self.mnenomic} {self.operands})"
 
-    def side_effects(self):
+    def side_effects(self) -> bool:
         # Changing control flow is a side effect
         return True
+

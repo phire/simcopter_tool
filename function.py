@@ -4,6 +4,7 @@ import textwrap
 
 import construct
 from iced_x86 import Decoder
+import base_types
 import codeview
 from intervaltree import IntervalTree
 
@@ -18,17 +19,22 @@ import ir
 from ir import *
 
 from usage import TypeUsage
-from scope import BasicBlockRef, Scope
+from ref import BasicBlockRef
+from scope import Scope
 
 from statement import match_return, match_statement, BasicBlock
 
 class VarArgs:
+    def __init__(self):
+        self.hidden = False
+        self.size = 0
 
     def as_code(self):
         return "..."
 
     def __repr__(self):
         return "VarArgs(...)"
+
 
 class FakeReturn:
     def __init__(self, s):
@@ -225,48 +231,14 @@ class Function(Item):
 
         self.staticlocals = IntervalTree()  # static locals for this function
         self.scope = Scope(self.codeview, self.p, self)
-
-        def HandleChild(child, scope):
-            nonlocal self, module
-
-            match child:
-                case codeview.BlockStart():
-                    address = program.getAddr(child.Segment, child.Offset)
-                    offset = address - self.address
-                    new_scope = Scope(child, program, self, scope)
-                    labels[offset].append(BlockStart(child, new_scope))
-                    labels[offset + child.Length].append(BlockEnd(child, scope))
-                    for inner_child in child._children:
-                        HandleChild(inner_child, new_scope)
-                case codeview.LocalData():
-                    if not child.Type and child.Name == "":
-                        # This is a switch table
-                        address = program.getAddr(child.Segment, child.Offset)
-                        offset = address - self.address
-                        labels[offset].append(SwitchTable(child, offset, self))
-
-                case codeview.CodeLabel():
-                    address = program.getAddr(child.Segment, child.Offset)
-                    offset = address - self.address
-                    labels[offset].append(Label(child.Name))
-
-
-        for x in self.codeview.children():
-            HandleChild(x, self.scope)
+        self.calling_convention = None
+        self.stack_adjust = 0 # adjustment to the stack pointer after return
+        self.return_udt = None
 
         if self.ty:
-            if self.args and isinstance(self.ty, tpi.LfMemberFunction) and self.ty.calltype != tpi.CallingConvention.ThisCall and self.args[0].name == "this":
-                self.args = self.args[1:]  # remove 'this' pointer
-                print(f"Warning: Function {self.name} is a member function, but has an extra 'this' pointer in args")
-            if len(self.ty.args) > 1 and self.ty.args[-1].TI == 0:
-                self.args.append(VarArgs())  # add varargs if last arg is NoType
-            assert len(self.args) == len(self.ty.args)
             self.ret = self.ty.rvtype
             module.use_type(self.ret, self, TypeUsage.Return)
-
-            if isinstance(self.ty, tpi.LfMemberFunction):
-                module.use_type(self.ty.classtype, self, TypeUsage.MemberImpl)
-
+            self.calling_convention = self.ty.calltype
         else:
             # the type is missing. We still know all the args from codeview
             # but we will need to extract the return type from the mangled name
@@ -286,21 +258,75 @@ class Function(Item):
             if not self.ret:
                 self.ret = FakeReturn(ret)
 
-        for c in self.codeview._children:
-            if isinstance(c, codeview.BpRelative) and c.Name == "__$ReturnUdt":
-                # This is the return-value optimization.
-                # But it's sometimes missing the return type, so patch it in.
-                if not c.Type:
-                    # We need to find a pointer typeinfo
-                    try:
-                        class_TI = self.ret.TI
-                        _refs = self.ret._refs
-                    except AttributeError:
-                        continue
-                    types = [program.types.types[x] for x in _refs]
-                    ptr = [x for x in types if isinstance(x, tpi.LfPointer) and x.Type.TI == class_TI]
-                    if ptr:
-                        c.Type = ptr[0]
+            # calling convention:
+            if "__thiscall" in front:
+                self.calling_convention = tpi.CallingConvention.ThisCall
+            elif "__cdecl" in front:
+                self.calling_convention = tpi.CallingConvention.NearC
+            else:
+                self.calling_convention = tpi.CallingConvention.NearStd
+
+
+        def HandleChild(child, scope):
+            nonlocal self, module
+
+            match child:
+                case codeview.BlockStart():
+                    address = program.getAddr(child.Segment, child.Offset)
+                    offset = address - self.address
+                    new_scope = Scope(child, program, self, scope)
+                    labels[offset].append(BlockStart(child, new_scope))
+                    labels[offset + child.Length].append(BlockEnd(child, scope))
+                    for inner_child in child._children:
+                        HandleChild(inner_child, new_scope)
+                case codeview.BpRelative():
+                    if child.Name == "__$ReturnUdt":
+                        # This is the return-value optimization.
+                        # But it's sometimes missing the return type, so patch it in.
+                        self.return_udt = child
+                        if not child.Type:
+                            # We need to find a pointer typeinfo
+                            try:
+                                class_TI = self.ret.TI
+                                _refs = self.ret._refs
+                            except AttributeError:
+                                return
+                            types = [program.types.types[x] for x in _refs]
+                            ptr = [x for x in types if isinstance(x, tpi.LfPointer) and x.Type.TI == class_TI]
+                            if ptr:
+                                child.Type = ptr[0]
+
+                case codeview.LocalData():
+                    if not child.Type and child.Name == "":
+                        # This is a switch table
+                        address = program.getAddr(child.Segment, child.Offset)
+                        offset = address - self.address
+                        labels[offset].append(SwitchTable(child, offset, self))
+
+
+                case codeview.CodeLabel():
+                    address = program.getAddr(child.Segment, child.Offset)
+                    offset = address - self.address
+                    labels[offset].append(Label(child.Name))
+
+        for x in self.codeview.children():
+            HandleChild(x, self.scope)
+
+        if self.args and self.calling_convention != tpi.CallingConvention.ThisCall and self.args[0].name == "this":
+            self.args[0].hidden = True
+            print(f"Warning: Function {self.name} is a member function, but has an extra 'this' pointer in args")
+
+        if self.ty:
+            if len(self.ty.args) > 1 and self.ty.args[-1].TI == 0:
+                self.args.append(VarArgs())  # add varargs if last arg is NoType
+            assert len([x for x in self.args if not x.hidden]) == len(self.ty.args)
+
+            if isinstance(self.ty, tpi.LfMemberFunction):
+                module.use_type(self.ty.classtype, self, TypeUsage.MemberImpl)
+
+        if self.calling_convention != tpi.CallingConvention.NearC and self.args:
+            last_arg = self.args[-1]
+            self.stack_adjust = last_arg.bp_offset + last_arg.size - 8
 
         self.find_all_basic_blocks(labels)
 
@@ -473,6 +499,7 @@ class Function(Item):
 
             assert head is not None
             self.body[head.start] = head
+            assert self.epilog.stack_adjust == self.stack_adjust
         if not self.epilog:
             return
 
@@ -499,9 +526,18 @@ class Function(Item):
                 bb.statements = [stmt]
                 #breakpoint()
 
+    def return_reg(self):
+        if self.ret and self.ret != base_types.Void:
+            try:
+                match self.ret.type_size():
+                    case 1: return Register.AL
+                    case 2: return Register.AX
+                    case 4: return Register.EAX
+            except: pass
+        return None
 
     def sig(self):
-        args = [arg.as_code() for arg in self.args]
+        args = [arg.as_code() for arg in self.args if not arg.hidden]
         modifiers = ""
         if isinstance(self.codeview, codeview.LocalProcedureStart):
             modifiers += "static "
