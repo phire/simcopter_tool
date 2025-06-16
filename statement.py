@@ -196,6 +196,8 @@ def consume_insts(exprs, insts):
                 raise ValueError(f"insts can't be cleanly divided into used and unused")
             new_insts.append(inst)
         else:
+            if inst.side_effects():
+                raise ValueError(f"inst {inst} has side effects, cannot be consumed")
             done = True
     return new_insts
 
