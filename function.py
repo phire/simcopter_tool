@@ -342,6 +342,9 @@ class Function(Item):
         if bb := self.body.get(offset, None):
             return BasicBlockRef(bb)
 
+    def is_thiscall(self):
+        return self.calling_convention == tpi.CallingConvention.ThisCall
+
     def is_library(self):
         return self.source_file and "msdev\\include" in self.source_file.lower()
 

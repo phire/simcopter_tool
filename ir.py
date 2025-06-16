@@ -424,21 +424,27 @@ class Pushed(Expression):
         return self.expr.as_rvalue()
 
 class CallExpr(Expression):
-    def __init__(self, fn, args, inst):
+    def __init__(self, fn, args, inst, this_expr=None):
         self.fn = fn
         self.args = args
         self.inst = inst
         self.adjust_expr = None
+        self.this_expr = this_expr
 
     def __repr__(self):
         return f"Call({self.fn}, args={self.args})"
 
     def as_rvalue(self):
         args = ", ".join(str(arg.as_rvalue()) for arg in self.args)
+        if self.this_expr:
+            return f"{self.this_expr.as_rvalue()}->{self.fn.name}({args})"
         return f"{self.fn.name}({args})"
+
 
     def visit(self, fn):
         fn(self)
+        if self.this_expr:
+            self.this_expr.visit(fn)
         if self.adjust_expr:
             self.adjust_expr.visit(fn)
         for arg in self.args:
@@ -656,12 +662,15 @@ class I:
               M.JLE | M.JNE | M.JNO | M.JNP | M.JNS | M.JO | M.JP | M.JS:
                 return JCond(inst, state)
             case M.CALL:
+                this_expr = state.reg.get(Register.ECX)
                 state.clear()
                 args = list(state.stack)
 
                 match operands[0]:
                     case FunctionRef(fn) if reg := fn.return_reg():
-                        state.call = expr = CallExpr(fn, args, ir)
+                        if not fn.is_thiscall():
+                            this_expr = None
+                        state.call = expr = CallExpr(fn, args, ir, this_expr)
                         adjust = fn.stack_adjust
                         while adjust and state.stack and (expr := state.stack.pop()):
                             i = expr.inst
@@ -674,7 +683,7 @@ class I:
 
                         state.reg[reg] = Reg(reg, expr, ir)
                     case _:
-                        state.call = expr = CallExpr(None, args, ir)
+                        state.call = expr = CallExpr(None, args, ir, None)
 
             case M.PUSH:
                 state.push(Pushed(operands[0], ir))
