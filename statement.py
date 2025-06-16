@@ -152,40 +152,68 @@ def are_all_insts_used(explicit, exprs, insts, bblock=None):
 
     return all([x in used for x in insts])
 
+def consume_insts(exprs, insts):
+    used = set()
+    def collect_used(expr):
+        nonlocal used
+        if expr.inst:
+            used.add(expr.inst)
+
+    for expr in exprs:
+        expr.visit(collect_used)
+
+    new_insts = []
+    done = False
+    for inst in insts:
+        if inst not in used:
+            if done:
+                raise ValueError(f"insts can't be cleanly divided into used and unused")
+            new_insts.append(inst)
+        else:
+            done = True
+    return new_insts
+
 
 def match_statement(bblock):
     insts = bblock.insts()
 
-    effects = [x for x in insts if x.side_effects()]
+    #effects = [x for x in insts if x.side_effects()]
 
-    head = stmt = None
-    match effects:
-        case [*head, I("mov", (Mem() as mem, Expression() as expr)) as i]:
-            stmt = Assign(mem, expr)
-        case [*head, I("add", (Mem() as mem, Expression() as expr)) as i]:
-            stmt = Modify("+", mem, expr)
-        case [*head, I("sub", (Mem() as mem, Expression() as expr)) as i]:
-            stmt = Modify("-", mem, expr)
-        case [*head, I("inc", Mem() as mem) as i]:
-            stmt = Increment(mem)
-        case [*head, I("dec", Mem() as mem) as i]:
-            stmt = Decrement(mem)
+    stmts = []
+    while insts:
+        match insts.pop():
+            case I("jmp", dest) as i:
+                stmts.append(i)
+                continue # filter out jump instructions
+            case I("mov", (Mem() as mem, Expression() as expr)):
+                stmt = Assign(mem, expr)
+            case I("add", (Mem() as mem, Expression() as expr)):
+                stmt = Modify("+", mem, expr)
+            case I("sub", (Mem() as mem, Expression() as expr)):
+                stmt = Modify("-", mem, expr)
+            case I("inc", Mem() as mem):
+                stmt = Increment(mem)
+            case I("dec", Mem() as mem):
+                stmt = Decrement(mem)
+            case _:
+                return None
 
-    if not stmt:
-        return None
+        exprs = [stmt.target]
+        if hasattr(stmt, 'value'):
+            exprs.append(stmt.value)
 
-    exprs = [stmt.target]
-    if hasattr(stmt, 'value'):
-        exprs.append(stmt.value)
-
-    if are_all_insts_used([i], exprs, insts):
         try:
             stmt.as_code()
-            return stmt
+            stmts.insert(0, stmt)
         except:
-            # for now, just ignore statements that cannot be converted to code
+            # for now, just ignore bblocks that cannot be converted to code
             return None
-    return None
+        try:
+            insts = consume_insts(exprs, insts)
+        except ValueError as e:
+            return None
+
+    return stmts
 
 def match_cond(bb):
     """ Match a conditional expression """

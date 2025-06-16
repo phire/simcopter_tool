@@ -521,12 +521,12 @@ class Function(Item):
 
 
         for bb in self.body.values():
-            if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.inlined:
+            if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.inlined or bb.statements:
                 # skip switch tables
                 continue
-            stmt = match_statement(bb)
-            if stmt:
-                bb.statements = [stmt]
+            stmts = match_statement(bb)
+            if stmts:
+                bb.statements = stmts
                 #breakpoint()
 
     def return_reg(self):
