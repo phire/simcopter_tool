@@ -354,6 +354,17 @@ class BinaryOp(RValue):
                 return f"({self.left.as_rvalue()} - {self.right.as_rvalue()})"
             case "and":
                 return f"({self.left.as_rvalue()} & {self.right.as_rvalue()})"
+            case "or":
+                return f"({self.left.as_rvalue()} | {self.right.as_rvalue()})"
+            case "xor":
+                return f"({self.left.as_rvalue()} ^ {self.right.as_rvalue()})"
+            case "mul" | "imul":
+                return f"({self.left.as_rvalue()} * {self.right.as_rvalue()})"
+            case "shr" | "sar":
+                return f"({self.left.as_rvalue()} >> {self.right.as_rvalue()})"
+            case "shl":
+                return f"({self.left.as_rvalue()} << {self.right.as_rvalue()})"
+
         raise ValueError(f"as_rvalue not implemented for BinaryOp {self.op}")
 
 
