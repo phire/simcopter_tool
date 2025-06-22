@@ -4,6 +4,7 @@ import base_types
 import ir
 from ir import *
 import function
+from labels import Label
 import x86
 
 class BasicBlock:
@@ -18,8 +19,17 @@ class BasicBlock:
         self.fallthrough = None
         self.fallfrom = None
         self.inlined = None
+        self.before = None
+        self.after = None
+        self.branch_id = None
+
 
         self.statements = []
+
+    def __lt__(self, other):
+        if not isinstance(other, BasicBlock):
+            return NotImplemented
+        return self.start < other.start
 
 
     def as_code(self):
@@ -59,6 +69,17 @@ class BasicBlock:
             return f"{fn.name}+(no address)"
         offset = addr - fn.address
         return f"{fn.name}+{offset:#x}"
+
+    def is_conditional(self):
+        """ Check if this block is a conditional block """
+        return self.fallthrough is not None and self.outgoing is not None
+
+    def set_label(self, label):
+        if self.label:
+            self.labels.remove(self.label)
+        label = Label(label)
+        self.labels.append(label)
+        self.label = label
 
 class Statement:
      pass

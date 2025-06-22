@@ -7,6 +7,7 @@ import base_types
 import codeview
 from intervaltree import IntervalTree
 
+from controlflow import find_loops
 from item import Data, Item
 import tpi
 import x86
@@ -338,6 +339,10 @@ class Function(Item):
         for aa, bb in pairwise(self.body.values()):
             if not isinstance(aa, BasicBlock) or not isinstance(bb, BasicBlock):
                 continue
+
+            aa.after = bb
+            bb.before = aa
+
             no_fallthrough = next((x for x in bb.labels if x is NoFallthrough()), None)
             if  aa.fallthrough or aa.outgoing or no_fallthrough:
                 continue
@@ -376,6 +381,7 @@ class Function(Item):
             self.return_bb.labels = [x for x in self.return_bb.labels if not isinstance(x, Label)] + [ret]
             self.return_bb.label = ret
 
+        find_loops(self.body)
 
         for bb in self.body.values():
             if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.inlined or bb.statements:
