@@ -2,7 +2,6 @@ from collections import defaultdict
 from itertools import pairwise
 import textwrap
 
-import construct
 from iced_x86 import Decoder
 import base_types
 import codeview
@@ -20,156 +19,14 @@ from ir import *
 
 from usage import TypeUsage
 from ref import BasicBlockRef
-from scope import Scope
+from scope import FakeReturn, Scope, VarArgs
+from switch import SwitchPointers, SwitchTable
+from labels import Line, Label, BlockStart, BlockEnd
+
 
 from statement import match_return, match_statement, BasicBlock
 
-class VarArgs:
-    def __init__(self):
-        self.hidden = False
-        self.size = 0
 
-    def as_code(self):
-        return "..."
-
-    def __repr__(self):
-        return "VarArgs(...)"
-
-
-class FakeReturn:
-    def __init__(self, s):
-        self.s = s
-
-    def typestr(self, name=None):
-        return self.s
-
-    def type_size(self):
-        return 4
-
-class Line:
-    def __init__(self, offset, line):
-        self.offset = offset
-        self.line = line
-
-    def as_code(self):
-        if self.line is not None:
-            return f"// LINE {self.line:d}:\n"
-        return ""
-
-    def __repr__(self):
-        return f"Line({self.offset:#x}, {self.line})"
-
-class SwitchTable:
-    def __init__(self, cv, offset, fn):
-        self.fn = fn
-        self.offset = offset
-        self.cv = cv
-        self.data = None  # will be set later
-        self.pointers = None
-        self.length = None
-
-    def __repr__(self):
-        return f"SwitchTable({self.fn.name}, {self.offset:#x}"
-
-    def as_code(self):
-        s = f"// Switch table\n"
-        if not self.data:
-            s += f"//   No data available yet\n"
-        else:
-            s += f"//  [{', '.join(f'{b}' for b in self.data)}]\n"
-        return s
-
-
-    def access(self, offset, size):
-         return Access(size, f"_SwitchTable_{self.offset:x}[{offset//size}]", None, offset=offset)
-
-    def populate(self, data, pointers):
-        """ Now that we have the corresponding switch pointers, we can probably
-            work out how long this table is"""
-        self.pointers = pointers
-        count = len(pointers.targets)
-        assert count < 256
-        for i, b in enumerate(data):
-            if b >= count: break
-        self.length = i
-        self.data = data[:i]
-
-class SwitchPointers:
-    def __init__(self, offset, data, fn):
-        self.fn = fn
-        self.offset = offset
-        self.targets = []
-        end = offset + len(data)
-        for i, t in enumerate(construct.GreedyRange(construct.Int32ul).parse(data)):
-            element_offset = offset + i * 4
-            if element_offset >= end:
-                break
-            if t < end:
-                end = t
-
-            if not (t >= fn.address and t < fn.address + fn.length): # should be within function bounds
-                end = element_offset
-                break
-
-            self.targets.append(t)
-        self.length = end - offset
-        self.data = data[:self.length]
-
-    def __repr__(self):
-        return f"SwitchPointers({fn.name}, {self.address:#x}, {len(self.data)})"
-
-    def as_code(self):
-        s = f"// Switch pointers:\n"
-        fn_addr = self.fn.address
-        for t in self.targets:
-            label = self.fn.getLabel(t - fn_addr)
-            if not label:
-                s += f"//   0x{t:08x} (no label)\n"
-            else:
-                s += f"//   {label.name}\n"
-        return s
-
-
-    def access(self, offset, size):
-        return Access(size, f"_Switch_{self.offset:x}[{offset}]", None, offset=offset)
-
-class BlockStart:
-    def __init__(self, cv, scope):
-        self.cv = cv
-        self.offset = cv.Offset
-        self.length = cv.Length
-        self.name = cv.Name
-        self._children = cv._children
-        self.scope = scope
-
-    def __repr__(self):
-        return f"BlockStart({self.name}, {self.offset:#x}, {self.length})"
-
-    def as_code(self):
-        s = f"// Block start:\n"
-        s += self.scope.locals_as_code()
-        return s
-
-class BlockEnd:
-    def __init__(self, block, scope):
-        self.block = block
-        self.parent_scope = scope
-
-    def __repr__(self):
-        return f"BlockEnd({self.block.Name}, {self.block.Offset:#x}, {self.block.Length})"
-
-    def as_code(self):
-        return f"// Block end:\n"
-
-class Label:
-    def __init__(self, name):
-        self.name = name.replace("$", "_")
-
-    def __repr__(self):
-        return f"Label({self.name})"
-
-    def as_code(self):
-        return f"{self.name}:\n"
 
 class NoFallthrough:
     def __repr__(self):

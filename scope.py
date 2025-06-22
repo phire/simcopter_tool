@@ -54,6 +54,29 @@ class Argument(Local):
         return f"Argument({self.as_code()}, {self.bp_offset:#x})"
 
 
+class VarArgs:
+    def __init__(self):
+        self.hidden = False
+        self.size = 0
+
+    def as_code(self):
+        return "..."
+
+    def __repr__(self):
+        return "VarArgs(...)"
+
+
+class FakeReturn:
+    def __init__(self, s):
+        self.s = s
+
+    def typestr(self, name=None):
+        return self.s
+
+    def type_size(self):
+        return 4
+
+
 class LocalData(Local):
     def __init__(self, name, ty, size, scope, fn, item):
         super().__init__(name, ty, 0, size, scope, fn)
