@@ -677,10 +677,13 @@ def match_prolog(bblock):
             return None, bblock
 
     new_bblock = None
+    labels = bblock.labels
     if tail:
         tail_len = tail[-1].inst.next_ip32 - tail[0].inst.ip32
-        new_bblock = BasicBlock(list(), bblock.scope, bblock.end - tail_len, bblock.end)
-    return Prolog(bblock.labels, stack_adjust, this_local, cleanup_fn), new_bblock
+        bblock.start = bblock.end - tail_len
+        bblock.labels = list()
+        new_bblock = bblock
+    return Prolog(labels, stack_adjust, this_local, cleanup_fn), new_bblock
 
 class Epilog:
     def __init__(self, line, stack_adjust):
