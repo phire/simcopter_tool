@@ -34,7 +34,7 @@ class BasicBlock:
 
     def as_code(self):
         if self.statements:
-            return "\n".join([s.as_code() for s in self.statements]) + "\n"
+            return ";\n".join([s.as_code() for s in self.statements]) + ";\n"
         return self.as_asm()
 
 
@@ -93,7 +93,7 @@ class Assign(Statement):
         return f"Assign({self.target}, {self.value})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()} = {self.value.as_rvalue()};"
+        return f"{self.target.as_lvalue()} = {self.value.as_rvalue()}"
 
     def __bool__(self):
         if not self.target.is_known() or not self.value.is_known():
@@ -120,7 +120,7 @@ class Modify(Assign):
         return f"Modify({self.op}, {self.target}, {self.value})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()} {self.op}= {self.value.as_rvalue()};"
+        return f"{self.target.as_lvalue()} {self.op}= {self.value.as_rvalue()}"
 
 
 
@@ -132,7 +132,7 @@ class Increment(Statement):
         return f"Increment({self.target})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()}++;"
+        return f"{self.target.as_lvalue()}++"
 
     def visit(self, fn):
         self.target.visit(fn)
@@ -145,7 +145,7 @@ class Decrement(Statement):
         return f"Decrement({self.target})"
 
     def as_code(self):
-        return f"{self.target.as_lvalue()}--;"
+        return f"{self.target.as_lvalue()}--"
 
     def visit(self, fn):
         self.target.visit(fn)
@@ -161,8 +161,8 @@ class Return(Statement):
 
     def as_code(self):
         if not self.value:
-            return "return;"
-        return f"return {self.value.as_rvalue()};"
+            return "return"
+        return f"return {self.value.as_rvalue()}"
 
     def visit(self, fn):
         self.value.visit(fn)
@@ -175,7 +175,7 @@ class ExprStatement(Statement):
         return f"ExprStatement({self.expr})"
 
     def as_code(self):
-        return f"{self.expr.as_rvalue()};"
+        return f"{self.expr.as_rvalue()}"
 
     def visit(self, fn):
         self.expr.visit(fn)

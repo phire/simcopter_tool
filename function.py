@@ -7,7 +7,8 @@ import base_types
 import codeview
 from intervaltree import IntervalTree
 
-from controlflow import find_loops
+from controlflow import find_backedges, find_loops
+import controlflow
 from item import Data, Item
 import tpi
 import x86
@@ -82,6 +83,7 @@ class Function(Item):
         self.epilog = None
         self.return_bb = None
         self.external_targets = set()
+        self.backedges = set()  # backedges in the control flow graph
 
         labels = defaultdict(list)
         for (offset, line) in lines.items():
@@ -381,7 +383,8 @@ class Function(Item):
             self.return_bb.labels = [x for x in self.return_bb.labels if not isinstance(x, Label)] + [ret]
             self.return_bb.label = ret
 
-        find_loops(self.body)
+        find_backedges(self)
+        self.block = find_loops(self, iter(self.body.values()))
 
         for bb in self.body.values():
             if isinstance(bb, (SwitchPointers, SwitchTable)) or bb.empty() or bb.inlined or bb.statements:
@@ -439,28 +442,7 @@ class Function(Item):
         elif self.prolog.cleanup_fn:
             s += f"\t// Function registers exception cleanup function at 0x{self.prolog.cleanup_fn.value:08x}\n"
 
-        try:
-            body = self.body
-        except:
-            body = []
-
-        for bb in body.values():
-            if not isinstance(bb, BasicBlock):
-                s += bb.as_code()
-                continue
-
-            labels = bb.labels
-            for label in labels:
-                s += label.as_code()
-
-            if bb.inlined:
-                continue
-
-            if not labels:
-                s += "\n"
-
-            if not bb.empty():
-                s += textwrap.indent(bb.as_code(), "\t")
+        s += self.block.as_code()
 
         if s[-2:] == "\n\n":
             s = s[:-1]

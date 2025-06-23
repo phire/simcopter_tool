@@ -175,7 +175,8 @@ class Mem(LValue):
                 raise ValueError(f"TODO: Base {self.base} is not an Access")
             # MSVC++ (without optimizations) doesn't seem to use all three at once (other than bp, which doesn't go through here)
             if self.index:
-                assert self.disp == 0
+                if self.disp != 0:
+                    raise ValueError("TODO: Cannot convert indexed Mem with displacement to LValue")
                 offset = ScaleExpr( self.index.expr.as_rvalue(), self.scale)
             else:
                 offset = self.disp
@@ -774,8 +775,8 @@ class I:
                 ops.append(formatter.format_operand(self.inst, i))
 
         if ops:
-            return f"__asm        {self.mnenomic:6} {", ".join(ops)};"
-        return f"__asm        {self.mnenomic};"
+            return f"__asm        {self.mnenomic:6} {", ".join(ops)}"
+        return f"__asm        {self.mnenomic}"
 
 
 
@@ -860,6 +861,17 @@ class Cond(Expression):
 
     def as_rvalue(self):
         return f"({self.left.as_rvalue()} {self.cond} {self.expr.as_rvalue()})"
+
+    def invert(self):
+        match self.cond:
+            case "==": return Cond("!=", self.left, self.expr)
+            case "!=": return Cond("==", self.left, self.expr)
+            case "<": return Cond(">=", self.left, self.expr)
+            case "<=": return Cond(">", self.left, self.expr)
+            case ">": return Cond("<=", self.left, self.expr)
+            case ">=": return Cond("<", self.left, self.expr)
+            case _:
+                raise ValueError(f"Cannot invert condition {self.cond}")
 
 class ErrorCond(Expression):
     def __init__(self, cond):
