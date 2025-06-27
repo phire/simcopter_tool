@@ -690,8 +690,8 @@ class I:
                             this_expr = None
                         state.call = expr = CallExpr(fn, args, ir, this_expr)
                         adjust = fn.stack_adjust
-                        while adjust and state.stack and (expr := state.stack.pop()):
-                            i = expr.inst
+                        while adjust and state.stack and (stack_expr := state.stack.pop()):
+                            i = stack_expr.inst
                             adjust += i.inst.stack_pointer_increment
                             assert adjust >= 0
                             i.stack_compensate = ir
