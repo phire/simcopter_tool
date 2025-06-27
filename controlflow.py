@@ -17,7 +17,6 @@ def find_backedges(fn):
     to_visit = [x for x in fn.body.values() if is_bb(x) and not (x.fallfrom or x.incomming)]
     heapq.heapify(to_visit)
 
-    backedges = set()
     visited = set()
     body_iter = iter(fn.body.values())
     to_visit.append(next(body_iter, None))  # start with the first basic block
@@ -90,12 +89,7 @@ def match_loop(loop_head, loop_end, body, parent):
         else:
             raise ValueError("failed to match condition")
 
-        match match_statement(loop_end):
-            case [I("jmp", _)] if not loop_end.incomming: pass
-            case [I("jmp", _)]:
-                loop_end.inlined = True
-                body.append(loop_end)
-            case _: body.append(loop_end)
+        trim_end(loop_end, body)
 
         return WhileLoop(cond, loop_head, body)
     elif loop_end.is_conditional():
@@ -129,12 +123,7 @@ def match_loop(loop_head, loop_end, body, parent):
             case _: raise ValueError("failed to match next step statement")
 
         body.remove(cond_bb)
-        match match_statement(loop_end):
-            case [I("jmp", _)] if not loop_end.incomming: pass
-            case [I("jmp", _)]:
-                loop_end.inlined = True
-                body.append(loop_end)
-            case _: body.append(loop_end)
+        trim_end(loop_end, body)
 
         match match_statement(init_bb):
             case [init, I("jmp", _)]:
@@ -153,8 +142,22 @@ def match_loop(loop_head, loop_end, body, parent):
     else:
         loop_head.set_label(f"_LOOP_{off:02x}")
         body.insert(0, loop_head)
-        body.append(loop_end)
+        trim_end(loop_end, body)
         return InfiniteLoop(body)
+
+def trim_end(bb, body):
+    match match_statement(bb):
+        case None:
+            body.append(bb)
+        case [I("jmp", _)]:
+            if bb.incomming:
+                bb.inlined = True
+                body.append(bb)
+        case [*stmts, I("jmp", _)]:
+            bb.statements = stmts
+            body.append(bb)
+        case _:
+            assert False, f"Unexpected end of loop: {bb.as_code()}"
 
 class Loop(Statement):
     def __init__(self, kind, cond, head, body):
