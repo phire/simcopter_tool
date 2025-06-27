@@ -682,7 +682,7 @@ class I:
             case M.CALL:
                 this_expr = state.reg.get(Register.ECX)
                 state.clear()
-                args = list(state.stack)
+                args = list(reversed(state.stack))
 
                 match operands[0]:
                     case FunctionRef(fn):
