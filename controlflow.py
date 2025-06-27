@@ -112,11 +112,10 @@ def match_loop(loop_head, loop_end, body, parent):
         cond_bb.set_label(f"_FOR_COND_{off:02x}")
         loop_head.set_label(f"_FOR_NEXT_{off:02x}")
 
-        if cond:
+        if cond and cond.as_rvalue():
             cond = cond.invert()
         else:
             raise ValueError("failed to match condition")
-
 
         match match_statement(loop_head):
             case [next_expr]: pass

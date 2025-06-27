@@ -880,6 +880,9 @@ class ErrorCond(Expression):
     def __repr__(self):
         return f"ErrorCond({self.cond})"
 
+    def __bool__(self):
+        return False
+
 class JCond(I):
     __match_args__ = ("cond", "target")
     def __init__(self, inst: Instruction, state: State):

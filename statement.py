@@ -267,9 +267,9 @@ def match_statement(bblock):
 def match_cond(bb):
     """ Match a conditional expression """
     _, insts = bb.decomp()
-    match [x for x in insts if x.side_effects()]:
-        case [JCond(cond)] as explicit:
-            return cond if are_all_insts_used(explicit, [cond], insts) else None
+    match insts.pop():
+        case JCond(cond):
+            return cond if are_all_insts_used([], [cond], insts) else None
 
 def match_ternary(bb, size):
     """
